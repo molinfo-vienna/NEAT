@@ -1,6 +1,10 @@
+from typing import Union
+
 import torch
+from torch import Tensor
 from lightning import LightningModule
 from torch_geometric.data import Data
+from torch.optim import Optimizer, AdamW
 
 from .decoder import Decoder
 
@@ -17,7 +21,7 @@ class MolGen(LightningModule):
 
         # Define loss functions here
         self.ce_loss = torch.nn.CrossEntropyLoss()
-        self.fm_loss = FlowMatchingLoss()
+        # self.fm_loss = FlowMatchingLoss()
 
     def forward(self, data: Data) -> Data:
         token_prob = self.decoder1(data)

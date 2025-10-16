@@ -1,0 +1,10 @@
+data
+logs 
+__pycache__/
+.vscode
+.env
+.pytest_cache
+.ipynb_checkpoints
+*.pyc
+*.tar.gz
+*.egg-info

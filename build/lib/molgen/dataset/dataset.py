@@ -35,11 +35,8 @@ class DataSet(InMemoryDataset):
         return ["qm9.pt"]
 
     def download(self):
-        raw_path = os.path.join(self.root, "raw")
-        if not os.path.exists(raw_path):
-            os.makedirs(raw_path, exist_ok=True)
-        path = DataSet.download_url(self.qm9_url, raw_path)
-        DataSet.extract_zip(path, raw_path)
+        path = DataSet.download_url(self.qm9_url, self.root)
+        DataSet.extract_zip(path, self.root)
 
     @staticmethod
     def download_url(url: str, root: str) -> str:
@@ -141,8 +138,8 @@ class DataSet(InMemoryDataset):
                 #    edge_index=edge_index,
                 #    edge_attr=edge_attr,
             )
-            #transform = ToUndirected()
-            #data = transform(data)
+            transform = ToUndirected()
+            data = transform(data)
             return data
 
         except Exception as e:
