@@ -1,0 +1,12 @@
+torch==2.9.0
+torch_geometric==2.7.0
+lightning
+tensorboard
+matplotlib
+scikit-learn
+pandas
+jupyter
+ipykernel
+py3dmol
+ipywidgets
+rdkit

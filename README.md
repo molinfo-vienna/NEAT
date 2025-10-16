@@ -1,14 +1,19 @@
 Let's get started!
 
-    ```bash
-    mamba create -n molgen python==3.11.13
-    mamba activate molgen
-    ```
+Create an evironment:
 
-    ```
-    pip install torch==2.7.1 --index-url https://download.pytorch.org/whl/cu128
-    ```
+```bash
+mamba create -n molgen python==3.11.13
+mamba activate molgen
+```
 
-    ```bash
-    pip install -e .
-    ```
+Install the GPU version of pytorch
+
+```bash
+pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+```
+Install the rest
+
+```bash
+pip install -e .
+```

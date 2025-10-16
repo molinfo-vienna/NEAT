@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "molgen"
-version = "2025.9.25"
-description = "Grids of Pharmacophore Interaction Fields for Affinity Prediction"
+version = "2025.10.216"
+description = "Autoregressive generation of molecules"
 readme = "README.md"
 requires-python = ">=3.11"
 license = {text = "MIT License"}
@@ -14,25 +14,18 @@ authors = [
 ]
 
 dependencies = [
-    "torch==2.7.1",
-    "torch_geometric==2.6.1",
-    "lightning==2.5.1",
-    "tensorboard==2.19.0",
-    "matplotlib==3.10.3",
-    "scikit-learn==1.7.0",
-    "pandas==2.3.0",
-    "jupyter==1.1.1",
-    "ipykernel==6.29.5",
-    "captum==0.8.0",
-    "py3dmol==2.5.2",
-    "ipywidgets==8.1.7",
-    "cdpkit==1.2.3",
-    "dask==2025.9.1",
-    "distributed==2025.9.1",
-    "msgpack==1.1.1",
-    "sortedcontainers==2.4.0",
-    "tblib==3.1.0",
-    "zict==3.0.0"
+    "torch==2.9.0",
+    "torch_geometric==2.7.0",
+    "lightning",
+    "tensorboard",
+    "matplotlib",
+    "scikit-learn",
+    "pandas",
+    "jupyter",
+    "ipykernel",
+    "py3dmol",
+    "ipywidgets",
+    "rdkit",
 ]
 
 [tool.setuptools]

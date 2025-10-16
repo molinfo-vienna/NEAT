@@ -1,0 +1,12 @@
+README.md
+pyproject.toml
+src/molgen/__init__.py
+src/molgen.egg-info/PKG-INFO
+src/molgen.egg-info/SOURCES.txt
+src/molgen.egg-info/dependency_links.txt
+src/molgen.egg-info/requires.txt
+src/molgen.egg-info/top_level.txt
+src/molgen/model/__init__.py
+src/molgen/model/encoder.py
+src/molgen/model/model.py
+src/molgen/model/molgen.py
