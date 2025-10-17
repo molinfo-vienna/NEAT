@@ -1,6 +1,7 @@
 from typing import Union
 import inspect
 import math
+from abc import ABC
 
 import torch
 from torch import Tensor
@@ -10,43 +11,60 @@ from torch.optim import Optimizer, AdamW
 from torch.nn import functional as F
 
 from .decoder import Decoder
-from .modules import LayerNorm, MLP, Block
+from .modules import (
+    LayerNorm,
+    MLP,
+    Block,
+    SinusoidalPositionalEncoding,
+    pad_and_mask_sequences,
+)
 
 
 class MolGen(LightningModule):
-    def __init__(self):
+    def __init__(self, **params) -> None:
         super(MolGen, self).__init__()
         self.save_hyperparameters()
         # self.hparams.setdefault("key", "value")
 
         # Atom type embedding layer
-        self.wte = torch.nn.Embedding(self.vocab_size, self.n_embd)
+        self.atom_type_embedding = torch.nn.Embedding(
+            num_embeddings=self.hparams.vocab_size, embedding_dim=self.hparams.n_embd
+        )
 
         # Fourier features for embedding of Cartesian coordinates
-        self.fourier_features = torch.nn.Identity()
+        self.cartesian_positional_embedding = SinusoidalPositionalEncoding(
+            out_dim=self.hparams.n_embd
+        )
 
-        # A linear layer for projecting the Cartesian coordinates (additional to the Fourier features)
+        # A linear layer for projecting the Cartesian coordinates (additional to the Fourier features) --> Probably not necessary
         self.coord_proj = torch.nn.Identity()
 
-        # Positional embedding layer for sequences (only important for causal transformer)
-        self.wpe = torch.nn.Embedding(self.block_size, self.n_embd)
+        # Positional embedding layer for sequences (only important for causal transformer) --> Probably not necessary
+        self.sequential_positional_embedding = torch.nn.Embedding(
+            self.hparams.block_size, self.hparams.n_embd
+        )
 
         # Dropout layer
-        self.drop = torch.nn.Dropout(self.dropout)
+        self.dropout_layer = torch.nn.Dropout(self.hparams.dropout)
 
         # Transformer blocks
-        self.h = (
-            torch.nn.ModuleList(
-                [
-                    Block(self.n_embd, self.n_head, self.dropout, self.bias)
-                    for _ in range(self.n_layer)
-                ]
-            ),
+        self.transformer_blocks = torch.nn.ModuleList(
+            [
+                Block(
+                    self.hparams.n_embd,
+                    self.hparams.n_head,
+                    self.hparams.dropout,
+                    self.hparams.bias,
+                )
+                for _ in range(self.hparams.n_layer)
+            ]
         )
-        self.ln_f = LayerNorm(self.n_embd, bias=self.bias)
+        self.output_layer_norm = LayerNorm(self.hparams.n_embd, bias=self.hparams.bias)
 
         # Linear layer to map the final embeddings to atom vocabulary logits
-        self.lm_head = torch.nn.Linear(self.n_embd, self.vocab_size, bias=False)
+        self.linear_output_head = torch.nn.Linear(
+            self.hparams.n_embd, self.hparams.vocab_size, bias=False
+        )
 
         # The atom types are supervised with a cross-entropy loss
         self.bce_loss = torch.nn.BCEWithLogitsLoss()
@@ -56,20 +74,27 @@ class MolGen(LightningModule):
         # "UserWarning: functional_call was passed multiple values for tied weights.
         # This behavior is deprecated and will be an error in future versions"
         # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        self.wte.weight = self.lm_head.weight
+        self.atom_type_embedding.weight = self.linear_output_head.weight
 
         # So far it is the GPT logic, here comes additional stuff
 
         # A second transformer block
-        self.h2 = (
-            torch.nn.ModuleList(
-                [
-                    Block(self.n_embd, self.n_head, self.dropout, self.bias)
-                    for _ in range(self.n_layer)
-                ]
-            ),
+
+        self.transformer_block_2 = torch.nn.ModuleList(
+            [
+                Block(
+                    self.hparams.n_embd,
+                    self.hparams.n_head,
+                    self.hparams.dropout,
+                    self.hparams.bias,
+                )
+                for _ in range(self.hparams.n_layer)
+            ]
         )
-        self.ln_f2 = LayerNorm(self.n_embd, bias=self.bias)
+
+        self.output_layer_norm_2 = LayerNorm(
+            self.hparams.n_embd, bias=self.hparams.bias
+        )
 
         # A simple MLP with layer norm used for the denoising step
         self.flow_matching_mlp = torch.nn.Identity()
@@ -83,7 +108,7 @@ class MolGen(LightningModule):
         for pn, p in self.named_parameters():
             if pn.endswith("c_proj.weight"):
                 torch.nn.init.normal_(
-                    p, mean=0.0, std=0.02 / math.sqrt(2 * self.n_layer)
+                    p, mean=0.0, std=0.02 / math.sqrt(2 * self.hparams.n_layer)
                 )
 
         # report number of parameters
@@ -98,7 +123,7 @@ class MolGen(LightningModule):
         """
         n_params = sum(p.numel() for p in self.parameters())
         if non_embedding:
-            n_params -= self.wpe.weight.numel()
+            n_params -= self.sequential_positional_embedding.weight.numel()
         return n_params
 
     def _init_weights(self, module):
@@ -111,36 +136,90 @@ class MolGen(LightningModule):
 
     def forward(self, data, targets=None):
         device = data.x.device
-        batch_size, sequence_length = data.x.size()
+        atom_counts = torch.bincount(data.batch)
+
+        sequence_length = atom_counts.max()
         assert (
-            sequence_length <= self.config.block_size
-        ), f"Cannot forward sequence of length {sequence_length}, block size is only {self.config.block_size}"
-        sequence_position = torch.arange(
-            0, sequence_length, dtype=torch.long, device=device
-        )  # shape (t)
+            sequence_length <= self.hparams.block_size
+        ), f"Cannot forward sequence of length {sequence_length}, block size is only {self.hparams.block_size}"
+
+        # Randomly select a subset of atoms per molecule
+        uniform_distribution = torch.rand(atom_counts.shape, device=device) * 0.999
+        deletion_limit = torch.ones_like(atom_counts, device=device)
+        atoms_to_delete = ((deletion_limit.float() + 1) * uniform_distribution).int()
+        # atoms_to_delete = ((atom_counts.float() + 1) * uniform_distribution).int()
+        atoms_to_keep = atom_counts - atoms_to_delete
+        random_indices = torch.cat(
+            [
+                (torch.randperm(i, device=device) + k)
+                for i, k in zip(atom_counts, data.ptr[0:-1])
+            ]
+        )
+        subset_idx = torch.cat(
+            [random_indices[j : j + k] for j, k in zip(data.ptr[0:-1], atoms_to_keep)]
+        )
+
+        target_idx = torch.tensor(
+            [
+                random_indices[j + k].item() if i > 0 else -1
+                for i, j, k in zip(atoms_to_delete, data.ptr[0:-1], atoms_to_keep)
+            ],
+            device=device,
+            dtype=torch.long,
+        )
+        target_types = data.x[target_idx]
+        target_types[target_idx == -1] = (
+            0  # Stop token for molecules without deleted nodes
+        )
+        target_pos = data.pos[target_idx]
+        target_pos[target_idx == -1] = 0.0
+
+        atom_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
+        atom_mask[subset_idx] = 1
+        data.x = data.x[atom_mask]
+        data.pos = data.pos[atom_mask]
+        data.batch = data.batch[atom_mask]
 
         # forward the GPT model itself
-        tok_emb = self.wte(data.x)  # token embeddings of shape (b, t, n_embd)
-        pos_emb = self.wpe(
-            sequence_position
+        atom_type_embeddings = self.atom_type_embedding(
+            data.x
+        )  # token embeddings of shape (b, t, n_embd)
+        cartesian_positional_embeddings = self.cartesian_positional_embedding(
+            data.pos
         )  # position embeddings of shape (t, n_embd)
-        x = self.drop(tok_emb + pos_emb)
-        for block in self.h:
-            x = block(x)
-        x = self.ln_f(x)
+        x = self.dropout_layer(atom_type_embeddings + cartesian_positional_embeddings)
 
-        if targets is not None:
-            # if we are given some desired targets also calculate the loss
-            logits = self.lm_head(x)
-            loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
-            )
-        else:
-            # inference-time mini-optimization: only forward the lm_head on the very last position
-            logits = self.lm_head(
-                x[:, [-1], :]
-            )  # note: using list [-1] to preserve the time dim
-            loss = None
+        # Here I need to reshape the input to (batch_size, max_seq_length, n_embd)
+        x, mask = pad_and_mask_sequences(x, data.batch)
+        attn_mask = mask.unsqueeze(1).unsqueeze(2)
+        attn_mask = attn_mask.expand(-1, self.hparams.n_head, -1, -1)
+
+        # Pass through transformer blocks
+        for block in self.transformer_blocks:
+            x = block(x, attn_mask=attn_mask)
+        x = self.output_layer_norm(x)
+        x = x * mask.unsqueeze(-1)
+        x = x.sum(dim=1)  # / atom_counts.unsqueeze(-1)
+
+        logits = self.linear_output_head(x)
+        loss = F.cross_entropy(
+            logits.view(-1, logits.size(-1)),
+            target_types.view(-1).long(),
+            ignore_index=-1,
+        )
+
+        # if targets is not None:
+        #     # if we are given some desired targets also calculate the loss
+        #     logits = self.linear_output_head(x)
+        #     loss = F.cross_entropy(
+        #         logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
+        #     )
+        # else:
+        #     # inference-time mini-optimization: only forward the lm_head on the very last position
+        #     logits = self.linear_output_head(
+        #         x[:, [-1], :]
+        #     )  # note: using list [-1] to preserve the time dim
+        #     loss = None
 
         return logits, loss
 
@@ -148,7 +227,7 @@ class MolGen(LightningModule):
         # Implement data augmentation logic here
         return data
 
-    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
+    def configure_optimizers(self, betas=(0.9, 0.999)) -> Optimizer:
         # start with all of the candidate parameters
         param_dict = {pn: p for pn, p in self.named_parameters()}
         # filter out those that do not require grad
@@ -158,7 +237,7 @@ class MolGen(LightningModule):
         decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
         nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
         optim_groups = [
-            {"params": decay_params, "weight_decay": weight_decay},
+            {"params": decay_params, "weight_decay": self.hparams.weight_decay},
             {"params": nodecay_params, "weight_decay": 0.0},
         ]
         num_decay_params = sum(p.numel() for p in decay_params)
@@ -170,25 +249,27 @@ class MolGen(LightningModule):
             f"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters"
         )
         # Create AdamW optimizer and use the fused version if it is available
-        fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-        use_fused = fused_available and device_type == "cuda"
-        extra_args = dict(fused=True) if use_fused else dict()
+        # fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
+        # use_fused = fused_available and device_type == "cuda"
+        # extra_args = dict(fused=True) if use_fused else dict()
         optimizer = torch.optim.AdamW(
-            optim_groups, lr=learning_rate, betas=betas, **extra_args
+            optim_groups,
+            lr=self.hparams.learning_rate,
+            betas=betas,
+            fused=True,  # **extra_args
         )
-        print(f"using fused AdamW: {use_fused}")
+        # print(f"using fused AdamW: {use_fused}")
 
         return optimizer
 
     def shared_step(self, batch: Data, batch_idx: int) -> Tensor:
-        y_hat = self(batch)
-        y = batch.y
+        logits, loss = self(batch)
 
-        return self.loss(y_hat, y)
+        return loss
 
     def training_step(self, batch: Data, batch_idx: int) -> Tensor:
         """Training step and logging"""
-        batch = self.flip_sign_and_voxel(batch)
+        # data augmentation by random rotation
         loss = self.shared_step(batch, batch_idx)
 
         self.log(
