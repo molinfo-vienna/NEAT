@@ -234,7 +234,11 @@ class MolGen(LightningModule):
         x = positional_embedding + time_embeddings
         x = x + output
         output_fm = self.flow_matching_mlp(x)
-        loss_fm = F.mse_loss(output_fm, interpolation, reduction="mean")
+        loss_fm = F.mse_loss(
+            output_fm[target_types != 0],
+            interpolation[target_types != 0],
+            reduction="mean",
+        )  # Stop tokens do not have a position so we need to exclude them from the loss
 
         # if targets is not None:
         #     # if we are given some desired targets also calculate the loss
