@@ -15,6 +15,8 @@ from torch.nn import functional as F
 
 from .modules import LayerNorm, MLP, Block
 
+# I integrated this into the MolGen class, so this file is here simply for reference
+
 
 class Decoder(nn.Module):
     def __init__(
@@ -123,7 +125,7 @@ class Decoder(nn.Module):
             loss = None
 
         return logits, loss
-    
+
     # --- These methods are from the original GPT code but are not currently used ---
 
     # def crop_block_size(self, block_size):

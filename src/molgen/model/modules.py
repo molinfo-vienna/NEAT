@@ -8,6 +8,7 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 """
 
 from abc import ABC
+import math
 
 import torch
 import torch.nn as nn
@@ -272,3 +273,216 @@ def pad_and_mask_sequences(sequences, batch_indices):
     attention_mask = flat_attention_mask.view(batch_size, max_seq_length)
 
     return padded_sequences, attention_mask
+
+
+def create_time_embeddings(timesteps, embedding_dim):
+    """
+    Creates sinusoidal time embeddings for a batch of timesteps.
+
+    Args:
+        timesteps (torch.Tensor): A tensor of shape (n,) containing timesteps in the range [0, 1].
+        embedding_dim (int): The dimensionality of the time embeddings (must be even).
+
+    Returns:
+        torch.Tensor: A tensor of shape (n, embedding_dim) containing the time embeddings.
+    """
+    assert embedding_dim % 2 == 0, "Embedding dimension must be even."
+
+    # Scale timesteps to the range [0, 1] (if not already scaled)
+    timesteps = timesteps.unsqueeze(1)  # Shape: (n, 1)
+
+    # Compute the sinusoidal frequencies
+    half_dim = embedding_dim // 2
+    frequencies = torch.exp(
+        -torch.arange(half_dim, device=timesteps.device, dtype=timesteps.dtype)
+        * torch.log(torch.tensor(10000.0))
+        / half_dim
+    )  # Shape: (half_dim,)
+
+    # Compute the sinusoidal embeddings
+    angular_frequencies = timesteps * frequencies  # Shape: (n, half_dim)
+    sin_embeddings = torch.sin(angular_frequencies)  # Shape: (n, half_dim)
+    cos_embeddings = torch.cos(angular_frequencies)  # Shape: (n, half_dim)
+
+    # Concatenate sine and cosine embeddings
+    time_embeddings = torch.cat(
+        [sin_embeddings, cos_embeddings], dim=1
+    )  # Shape: (n, embedding_dim)
+
+    return time_embeddings
+
+
+def quaternions_to_rotation_matrices(quaternions):
+    """
+    Converts a batch of quaternions to a batch of 3x3 rotation matrices.
+
+    Args:
+        quaternions (torch.Tensor): A tensor of shape (batch_size, 4) representing a batch of quaternions [q_w, q_x, q_y, q_z].
+                                    The quaternions are assumed to be normalized.
+
+    Returns:
+        torch.Tensor: A tensor of shape (batch_size, 3, 3) containing the rotation matrices.
+    """
+    # Ensure the quaternions are normalized
+    quaternions = quaternions / quaternions.norm(dim=1, keepdim=True)
+
+    # Extract components of the quaternions
+    q_w, q_x, q_y, q_z = (
+        quaternions[:, 0],
+        quaternions[:, 1],
+        quaternions[:, 2],
+        quaternions[:, 3],
+    )
+
+    # Compute the rotation matrices
+    rotation_matrices = torch.stack(
+        [
+            torch.stack(
+                [
+                    1 - 2 * (q_y**2 + q_z**2),
+                    2 * (q_x * q_y - q_z * q_w),
+                    2 * (q_x * q_z + q_y * q_w),
+                ],
+                dim=-1,
+            ),
+            torch.stack(
+                [
+                    2 * (q_x * q_y + q_z * q_w),
+                    1 - 2 * (q_x**2 + q_z**2),
+                    2 * (q_y * q_z - q_x * q_w),
+                ],
+                dim=-1,
+            ),
+            torch.stack(
+                [
+                    2 * (q_x * q_z - q_y * q_w),
+                    2 * (q_y * q_z + q_x * q_w),
+                    1 - 2 * (q_x**2 + q_y**2),
+                ],
+                dim=-1,
+            ),
+        ],
+        dim=1,
+    )  # Shape: (batch_size, 3, 3)
+
+    return rotation_matrices
+
+
+def compute_graph_centers(positions, batch_idx):
+    """
+    Computes the center (mean position) of each graph in the batch.
+
+    Args:
+        positions (torch.Tensor): A tensor of shape (num_nodes, 3) containing the 3D positions of all nodes.
+        batch_idx (torch.Tensor): A tensor of shape (num_nodes,) indicating the graph index for each node.
+
+    Returns:
+        torch.Tensor: A tensor of shape (batch_size, 3) containing the center of each graph.
+    """
+    # Sum the positions for each graph
+    graph_sums = torch.zeros(
+        batch_idx.max() + 1, 3, device=positions.device, dtype=positions.dtype
+    )
+    graph_counts = torch.zeros(
+        batch_idx.max() + 1, device=positions.device, dtype=positions.dtype
+    )
+
+    graph_sums.index_add_(0, batch_idx, positions)  # Sum positions for each graph
+    graph_counts.index_add_(
+        0, batch_idx, torch.ones_like(batch_idx, dtype=positions.dtype)
+    )  # Count nodes per graph
+
+    # Compute the mean (center) for each graph
+    graph_centers = graph_sums / graph_counts.unsqueeze(1)  # Shape: (batch_size, 3)
+
+    return graph_centers
+
+
+def generate_uniform_quaternions(batch_size, device):
+    """
+    Generate uniformly sampled unit quaternions.
+
+    Args:
+        batch_size (int): Number of quaternions to generate.
+        device (torch.device): Device for computations (e.g., 'cpu' or 'cuda').
+
+    Returns:
+        torch.Tensor: Tensor of shape (batch_size, 4) containing unit quaternions.
+    """
+    N = batch_size
+
+    # Step 1: Generate random rotation axes
+    random_axes = torch.randn(N, 3, device=device)
+    # Add a small epsilon to the norm to avoid division by zero
+    epsilon = 1e-8
+    random_axes = random_axes / (
+        random_axes.norm(dim=1, keepdim=True) + epsilon
+    )  # Normalize to unit vectors
+
+    # Step 2: Generate random rotation angles
+    random_angles = (torch.rand(N, device=device) * (math.pi - 0.1)) + (0.05 * math.pi)
+
+    # Step 3: Construct random quaternions
+    half_angles = random_angles / 2
+    qw = torch.cos(half_angles)
+    qxyz = random_axes * torch.sin(half_angles).unsqueeze(1)
+    random_quaternions = torch.cat([qw.unsqueeze(1), qxyz], dim=1)  # Shape (N, 4)
+
+    return random_quaternions
+
+
+def draw_random_quaternions(batch_size, device):
+    # Generate random rotation quaternions for each graph
+    rot = generate_uniform_quaternions(batch_size, device)
+    rot = rot / rot.norm(dim=1, keepdim=True)
+    mask = rot[:, 0] < 0  # Check where w < 0
+    rot[mask] = -rot[mask]  # Flip the sign of the entire quaternion
+
+    return rot
+
+
+def rotate_graphs_randomly(positions, batch_idx):
+    """
+    Rotates and translates the positions of nodes in a batch of PyG graphs w.r.t. their centers.
+
+    Args:
+        positions (torch.Tensor): A tensor of shape (num_nodes, 3) containing the 3D positions of all nodes.
+        batch_idx (torch.Tensor): A tensor of shape (num_nodes,) indicating the graph index for each node.
+        quaternions (torch.Tensor): A tensor of shape (batch_size, 4) containing the rotation quaternions for each graph.
+        translation_vectors (torch.Tensor): A tensor of shape (batch_size, 3) containing the translation vectors for each graph.
+
+    Returns:
+        torch.Tensor: A tensor of shape (num_nodes, 3) containing the rotated and translated positions.
+    """
+    # Step 0: Draw random quaternions for each graph
+    batch_size = batch_idx.max().item() + 1
+    device = positions.device
+    rot_operator = draw_random_quaternions(batch_size, device)
+
+    # Step 1: Convert quaternions to rotation matrices
+    rot_operator = quaternions_to_rotation_matrices(
+        rot_operator.clone()
+    )  # Shape: (batch_size, 3, 3)
+
+    # Step 2: Compute the center of each graph
+    graph_centers = compute_graph_centers(
+        positions, batch_idx
+    )  # Shape: (batch_size, 3)
+
+    # Step 3: Center the positions (subtract the graph center)
+    centered_positions = positions - graph_centers[batch_idx]  # Shape: (num_nodes, 3)
+
+    # Step 4: Apply rotation
+    node_rotation_matrices = rot_operator[batch_idx]  # Shape: (num_nodes, 3, 3)
+    rotated_positions = torch.bmm(
+        node_rotation_matrices, centered_positions.unsqueeze(-1)
+    ).squeeze(
+        -1
+    )  # Shape: (num_nodes, 3)
+
+    # Step 5: Recenter the positions (add the graph center back)
+    recentered_positions = (
+        rotated_positions + graph_centers[batch_idx]
+    )  # Shape: (num_nodes, 3)
+
+    return recentered_positions

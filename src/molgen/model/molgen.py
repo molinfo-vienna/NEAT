@@ -9,6 +9,7 @@ from lightning import LightningModule
 from torch_geometric.data import Data
 from torch.optim import Optimizer, AdamW
 from torch.nn import functional as F
+from torch_geometric.nn.models import MLP as GeoMLP
 
 from .decoder import Decoder
 from .modules import (
@@ -17,6 +18,8 @@ from .modules import (
     Block,
     SinusoidalPositionalEncoding,
     pad_and_mask_sequences,
+    create_time_embeddings,
+    rotate_graphs_randomly,
 )
 
 
@@ -78,26 +81,34 @@ class MolGen(LightningModule):
 
         # So far it is the GPT logic, here comes additional stuff
 
-        # A second transformer block
+        # # A second transformer block
+        # self.transformer_block_2 = torch.nn.ModuleList(
+        #     [
+        #         Block(
+        #             self.hparams.n_embd,
+        #             self.hparams.n_head,
+        #             self.hparams.dropout,
+        #             self.hparams.bias,
+        #         )
+        #         for _ in range(self.hparams.n_layer)
+        #     ]
+        # )
 
-        self.transformer_block_2 = torch.nn.ModuleList(
-            [
-                Block(
-                    self.hparams.n_embd,
-                    self.hparams.n_head,
-                    self.hparams.dropout,
-                    self.hparams.bias,
-                )
-                for _ in range(self.hparams.n_layer)
-            ]
-        )
+        # self.output_layer_norm_2 = LayerNorm(
+        #     self.hparams.n_embd, bias=self.hparams.bias
+        # )
 
-        self.output_layer_norm_2 = LayerNorm(
-            self.hparams.n_embd, bias=self.hparams.bias
+        # Positional embedding for flow matching
+        self.cartesian_positional_embedding_fm = SinusoidalPositionalEncoding(
+            out_dim=self.hparams.n_embd
         )
 
         # A simple MLP with layer norm used for the denoising step
-        self.flow_matching_mlp = torch.nn.Identity()
+        self.flow_matching_mlp = GeoMLP(
+            channel_list=[self.hparams.n_embd, self.hparams.n_embd, 3],
+            dropout=self.hparams.dropout,
+            bias=self.hparams.bias,
+        )
 
         # Define loss functions here
         # self.fm_loss = FlowMatchingLoss()
@@ -137,6 +148,7 @@ class MolGen(LightningModule):
     def forward(self, data, targets=None):
         device = data.x.device
         atom_counts = torch.bincount(data.batch)
+        batch_size = atom_counts.size(0)
 
         sequence_length = atom_counts.max()
         assert (
@@ -199,14 +211,30 @@ class MolGen(LightningModule):
             x = block(x, attn_mask=attn_mask)
         x = self.output_layer_norm(x)
         x = x * mask.unsqueeze(-1)
-        x = x.sum(dim=1)  # / atom_counts.unsqueeze(-1)
+        output = x.sum(dim=1)  # / atom_counts.unsqueeze(-1)
 
-        logits = self.linear_output_head(x)
-        loss = F.cross_entropy(
+        logits = self.linear_output_head(output)
+        loss_ce = F.cross_entropy(
             logits.view(-1, logits.size(-1)),
             target_types.view(-1).long(),
             ignore_index=-1,
         )
+
+        # --- Here comes the flow matching logic ---
+
+        time_step = torch.rand(batch_size, device=device)
+        time_embeddings = create_time_embeddings(time_step, self.hparams.n_embd)
+        pos_random = torch.randn(batch_size, 3, device=device)  # Shape: (num_graphs, 3)
+        interpolation = target_pos - pos_random
+        # t = 0 --> pos_random, t=1 --> target_pos
+        interpolated_pos = pos_random + interpolation * time_step.unsqueeze(1)
+        positional_embedding = self.cartesian_positional_embedding_fm(
+            interpolated_pos
+        )  # Shape: (num_graphs * seq_length, n_embd)
+        x = positional_embedding + time_embeddings
+        x = x + output
+        output_fm = self.flow_matching_mlp(x)
+        loss_fm = F.mse_loss(output_fm, interpolation, reduction="mean")
 
         # if targets is not None:
         #     # if we are given some desired targets also calculate the loss
@@ -221,7 +249,7 @@ class MolGen(LightningModule):
         #     )  # note: using list [-1] to preserve the time dim
         #     loss = None
 
-        return logits, loss
+        return logits, loss_ce, loss_fm
 
     def data_augmentation(self, data: Data) -> Data:
         # Implement data augmentation logic here
@@ -263,18 +291,37 @@ class MolGen(LightningModule):
         return optimizer
 
     def shared_step(self, batch: Data, batch_idx: int) -> Tensor:
-        logits, loss = self(batch)
+        logits, loss_ce, loss_fm = self(batch)
 
-        return loss
+        return loss_ce, loss_fm
 
     def training_step(self, batch: Data, batch_idx: int) -> Tensor:
         """Training step and logging"""
         # data augmentation by random rotation
-        loss = self.shared_step(batch, batch_idx)
+        batch.pos = rotate_graphs_randomly(batch.pos, batch.batch)
+        loss_ce, loss_fm = self.shared_step(batch, batch_idx)
 
         self.log(
             "train/train_loss",
-            loss,
+            loss_ce + loss_fm,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=False,
+            batch_size=len(batch),
+            reduce_fx="mean",
+        )
+        self.log(
+            "train/train_loss_ce",
+            loss_ce,
+            prog_bar=True,
+            on_step=True,
+            on_epoch=False,
+            batch_size=len(batch),
+            reduce_fx="mean",
+        )
+        self.log(
+            "train/train_loss_fm",
+            loss_fm,
             prog_bar=True,
             on_step=True,
             on_epoch=False,
@@ -282,21 +329,37 @@ class MolGen(LightningModule):
             reduce_fx="mean",
         )
 
-        return loss
+        return loss_ce + loss_fm
 
     def validation_step(self, batch: Data, batch_idx: int) -> Tensor:
-        loss = self.shared_step(batch, batch_idx)
+        loss_ce, loss_fm = self.shared_step(batch, batch_idx)
 
         self.log(
             "val/val_loss",
-            loss,
+            loss_ce + loss_fm,
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch),
+        )
+        self.log(
+            "val/val_loss_fm",
+            loss_fm,
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch),
+        )
+        self.log(
+            "val/val_loss_ce",
+            loss_ce,
             prog_bar=True,
             on_step=False,
             on_epoch=True,
             batch_size=len(batch),
         )
 
-        return loss
+        return loss_ce + loss_fm
 
     def predict_step(
         self, batch: Data, batch_idx: int = 0
