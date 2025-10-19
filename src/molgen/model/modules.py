@@ -28,7 +28,7 @@ class LayerNorm(nn.Module):
 
 
 class MaskedBidirectionalAttention(nn.Module):
-    def __init__(self, n_embd, n_head, dropout, bias):
+    def __init__(self, n_embd, n_head, dropout, bias, pos_embedder=None):
         super().__init__()
         assert n_embd % n_head == 0
         # key, query, value projections for all heads, but in a batch
@@ -41,8 +41,9 @@ class MaskedBidirectionalAttention(nn.Module):
         self.n_head = n_head
         self.n_embd = n_embd
         self.dropout = dropout
+        self.pos_embedder = pos_embedder  # Placeholder for positional embedding module
 
-    def forward(self, x, attn_mask=None):
+    def forward(self, x, attn_mask=None, pos=None):
         B, T, C = (
             x.size()
         )  # batch size, sequence length, embedding dimensionality (n_embd)
@@ -58,6 +59,9 @@ class MaskedBidirectionalAttention(nn.Module):
         v = v.view(B, T, self.n_head, C // self.n_head).transpose(
             1, 2
         )  # (B, nh, T, hs)
+
+        if self.pos_embedder and pos is not None:
+            q, k = self.pos_embedder(q, k, pos)
 
         # Apply scaled dot-product attention with the provided attention mask
         y = torch.nn.functional.scaled_dot_product_attention(
@@ -143,15 +147,17 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, n_embd, n_head, dropout, bias):
+    def __init__(self, n_embd, n_head, dropout, bias, pos_embedder=None):
         super().__init__()
         self.ln_1 = LayerNorm(n_embd, bias=bias)
-        self.attn = MaskedBidirectionalAttention(n_embd, n_head, dropout, bias)
+        self.attn = MaskedBidirectionalAttention(
+            n_embd, n_head, dropout, bias, pos_embedder
+        )
         self.ln_2 = LayerNorm(n_embd, bias=bias)
         self.mlp = MLP(n_embd, dropout, bias)
 
-    def forward(self, x, attn_mask=None):
-        x = x + self.attn(self.ln_1(x), attn_mask=attn_mask)
+    def forward(self, x, attn_mask=None, pos=None):
+        x = x + self.attn(self.ln_1(x), attn_mask=attn_mask, pos=pos)
         x = x + self.mlp(self.ln_2(x))
         return x
 

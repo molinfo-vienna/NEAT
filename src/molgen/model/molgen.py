@@ -21,6 +21,7 @@ from .modules import (
     create_time_embeddings,
     rotate_graphs_randomly,
 )
+from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
 
 
 class MolGen(LightningModule):
@@ -35,7 +36,10 @@ class MolGen(LightningModule):
         )
 
         # Fourier features for embedding of Cartesian coordinates
-        self.cartesian_positional_embedding = SinusoidalPositionalEncoding(
+        # self.cartesian_positional_embedding = SinusoidalPositionalEncoding(
+        #     out_dim=self.hparams.n_embd
+        # )
+        self.cartesian_positional_embedding = FourierPositionEncoding(
             out_dim=self.hparams.n_embd
         )
 
@@ -43,6 +47,7 @@ class MolGen(LightningModule):
         self.coord_proj = torch.nn.Identity()
 
         # Positional embedding layer for sequences (only important for causal transformer) --> Probably not necessary
+        # TODO: Throw this out!
         self.sequential_positional_embedding = torch.nn.Embedding(
             self.hparams.block_size, self.hparams.n_embd
         )
@@ -58,6 +63,10 @@ class MolGen(LightningModule):
                     self.hparams.n_head,
                     self.hparams.dropout,
                     self.hparams.bias,
+                    AxialRotaryPositionEncoding(
+                        embed_dim=self.hparams.n_embd,
+                        num_heads=self.hparams.n_head,
+                    ),
                 )
                 for _ in range(self.hparams.n_layer)
             ]
@@ -145,7 +154,7 @@ class MolGen(LightningModule):
         elif isinstance(module, torch.nn.Embedding):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
-    def forward(self, data, targets=None):
+    def forward(self, data):
         device = data.x.device
         atom_counts = torch.bincount(data.batch)
         batch_size = atom_counts.size(0)
@@ -205,10 +214,13 @@ class MolGen(LightningModule):
         x, mask = pad_and_mask_sequences(x, data.batch)
         attn_mask = mask.unsqueeze(1).unsqueeze(2)
         attn_mask = attn_mask.expand(-1, self.hparams.n_head, -1, -1)
+        # pos = torch.zeros((data.pos.shape[0], 1), device=device)
+        # pos = torch.cat((pos, data.pos), dim=-1)
+        pos, _ = pad_and_mask_sequences(data.pos, data.batch)
 
         # Pass through transformer blocks
         for block in self.transformer_blocks:
-            x = block(x, attn_mask=attn_mask)
+            x = block(x, attn_mask=attn_mask, pos=pos)
         x = self.output_layer_norm(x)
         x = x * mask.unsqueeze(-1)
         output = x.sum(dim=1)  # / atom_counts.unsqueeze(-1)
