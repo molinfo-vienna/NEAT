@@ -7,16 +7,14 @@ import torch
 from torch import Tensor
 from lightning import LightningModule
 from torch_geometric.data import Data
-from torch.optim import Optimizer, AdamW
+from torch.optim import Optimizer
 from torch.nn import functional as F
-from torch_geometric.nn.models import MLP as GeoMLP
+from torch_geometric.nn.models import MLP
 from torch_geometric.nn.pool import global_add_pool
 
 from .modules import (
     LayerNorm,
-    MLP,
     Block,
-    SinusoidalPositionalEncoding,
     pad_and_mask_sequences,
     create_time_embeddings,
     rotate_graphs_randomly,
@@ -28,6 +26,7 @@ class MolGen(LightningModule):
     def __init__(self, **params) -> None:
         super(MolGen, self).__init__()
         self.save_hyperparameters()
+        # This will be handy when we introduce more hyper parameters
         # self.hparams.setdefault("key", "value")
 
         # Atom type embedding layer
@@ -36,21 +35,9 @@ class MolGen(LightningModule):
         )
 
         # Fourier features for embedding of Cartesian coordinates
-        # self.cartesian_positional_embedding = SinusoidalPositionalEncoding(
-        #     out_dim=self.hparams.n_embd
-        # )
         self.cartesian_positional_embedding = FourierPositionEncoding(
             out_dim=self.hparams.n_embd
         )
-
-        # A linear layer for projecting the Cartesian coordinates (additional to the Fourier features) --> Probably not necessary
-        self.coord_proj = torch.nn.Identity()
-
-        # Positional embedding layer for sequences (only important for causal transformer) --> Probably not necessary
-        # # TODO: Throw this out!
-        # self.sequential_positional_embedding = torch.nn.Embedding(
-        #     self.hparams.block_size, self.hparams.n_embd
-        # )
 
         # Dropout layer
         self.dropout_layer = torch.nn.Dropout(self.hparams.dropout)
@@ -88,45 +75,19 @@ class MolGen(LightningModule):
         # not 100% sure what this is, so far seems to be harmless. TODO investigate
         self.atom_type_embedding.weight = self.linear_output_head.weight
 
-        # So far it is the GPT logic, here comes additional stuff
-
-        # # A second transformer block
-        # self.transformer_block_2 = torch.nn.ModuleList(
-        #     [
-        #         Block(
-        #             self.hparams.n_embd,
-        #             self.hparams.n_head,
-        #             self.hparams.dropout,
-        #             self.hparams.bias,
-        #         )
-        #         for _ in range(self.hparams.n_layer)
-        #     ]
-        # )
-
-        # self.output_layer_norm_2 = LayerNorm(
-        #     self.hparams.n_embd, bias=self.hparams.bias
-        # )
-
-        # Positional embedding for flow matching
-        # self.cartesian_positional_embedding_fm = SinusoidalPositionalEncoding(
-        #     out_dim=self.hparams.n_embd
-        # )
-
+        # So far it is the GPT logic, Flow Matching only needs an additional MLP
         self.cartesian_positional_embedding_fm = FourierPositionEncoding(
             out_dim=self.hparams.n_embd
         )
 
         # A simple MLP with layer norm used for the denoising step
-        self.flow_matching_mlp = GeoMLP(
+        self.flow_matching_mlp = MLP(
             channel_list=[self.hparams.n_embd, self.hparams.n_embd, 3],
             dropout=self.hparams.dropout,
             bias=self.hparams.bias,
         )
 
-        # Define loss functions here
-        # self.fm_loss = FlowMatchingLoss()
-
-        # init all weights
+        # init all weights, this is again from the GPT-2 code
         self.apply(self._init_weights)
         # apply special scaled init to the residual projections, per GPT-2 paper
         for pn, p in self.named_parameters():
@@ -138,7 +99,7 @@ class MolGen(LightningModule):
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
-    def get_num_params(self, non_embedding=True):
+    def get_num_params(self):
         """
         Return the number of parameters in the model.
         For non-embedding count (default), the position embeddings get subtracted.
@@ -146,8 +107,7 @@ class MolGen(LightningModule):
         params are actually used as weights in the final layer, so we include them.
         """
         n_params = sum(p.numel() for p in self.parameters())
-        # if non_embedding:
-        #     n_params -= self.sequential_positional_embedding.weight.numel()
+
         return n_params
 
     def _init_weights(self, module):
@@ -161,8 +121,6 @@ class MolGen(LightningModule):
     def forward(self, data):
         device = data.x.device
         atom_counts = torch.bincount(data.batch)
-        batch_size = atom_counts.size(0)
-
         sequence_length = atom_counts.max()
         assert (
             sequence_length <= self.hparams.block_size
@@ -180,18 +138,16 @@ class MolGen(LightningModule):
             batch_target,
             stop_tokens,
         ) = self.source_target_split(data, device=device)
-        num_stop_tokens = stop_tokens.sum()
 
-        # forward the GPT model itself
-        atom_type_embeddings = self.atom_type_embedding(
-            x_source
-        )  # token embeddings of shape (b, t, n_embd)
+        # Embedding layers for atom types and positions
+        atom_type_embeddings = self.atom_type_embedding(x_source)
         cartesian_positional_embeddings = self.cartesian_positional_embedding(
             pos_source
-        )  # position embeddings of shape (t, n_embd)
+        )
         x = self.dropout_layer(atom_type_embeddings + cartesian_positional_embeddings)
 
-        # Here I need to reshape the input to (batch_size, max_seq_length, n_embd)
+        # Here we need to reshape the input to (batch_size, max_seq_length, n_embd)
+        # This could also be done with sequence packing, but for now we keep it simple
         x, mask = pad_and_mask_sequences(x, batch_source)
         attn_mask = mask.unsqueeze(1).unsqueeze(2)
         attn_mask = attn_mask.expand(-1, self.hparams.n_head, -1, -1)
@@ -202,8 +158,7 @@ class MolGen(LightningModule):
             x = block(x, attn_mask=attn_mask, pos=pos)
         x = self.output_layer_norm(x)
         x = x * mask.unsqueeze(-1)
-        output = x.sum(dim=1)  # / atom_counts.unsqueeze(-1)
-        logits = self.linear_output_head(output)
+        output = x.sum(dim=1)  # Pooling of atom embeddings into molecule embedding
 
         # --- Atom type / Stop token prediction loss ---
 
@@ -211,6 +166,7 @@ class MolGen(LightningModule):
         # Here we compute the CE of the prediction wrt all atoms in the target atom set.
         # This will be combined with the flow matching MSE loss below via logsumexp
         # for each molecule.
+        logits = self.linear_output_head(output)  # Map embeddings to atom type logits
         loss_ce = F.cross_entropy(
             logits[batch_target],
             x_target.long(),
@@ -231,7 +187,7 @@ class MolGen(LightningModule):
         interpolated_pos = pos_random + interpolation * time_step.unsqueeze(1)
 
         # Does this need its own positional embedding layer? Not sure yet, but doesn't seem like it.
-        # I can probably use the same as above for embedding the source set positions.
+        # We can probably use the same as above for embedding the source set positions.
         positional_embedding = self.cartesian_positional_embedding_fm(interpolated_pos)
 
         # Add embeddings up and predict the vector field
@@ -242,6 +198,7 @@ class MolGen(LightningModule):
 
         # --- Aggregate CE and FM losses over each target atom set ---
 
+        # logsumexp takes effectively the minimum atom-wise loss contribution per molecule
         loss = loss_ce + loss_fm
         loss = torch.exp(-loss)
         _, new_target_set_indices = torch.unique(batch_target, return_inverse=True)
@@ -254,7 +211,6 @@ class MolGen(LightningModule):
 
     def source_target_split(self, data: Data, device=None):
         atom_counts = torch.bincount(data.batch)
-        batch_size = atom_counts.size(0)
         # Randomly select a subset of atoms per molecule
         uniform_distribution = torch.rand(atom_counts.shape, device=device) * 0.999
         # deletion_limit = torch.ones_like(atom_counts, device=device)
@@ -272,22 +228,6 @@ class MolGen(LightningModule):
         subset_idx = torch.cat(
             [random_indices[j : j + k] for j, k in zip(data.ptr[0:-1], atoms_to_keep)]
         )
-
-        # target_idx = torch.tensor(
-        #     [
-        #         random_indices[j + k].item() if i > 0 else -1
-        #         for i, j, k in zip(atoms_to_delete, data.ptr[0:-1], atoms_to_keep)
-        #     ],
-        #     device=device,
-        #     dtype=torch.long,
-        # )
-        # target_types = data.x[target_idx]
-        # target_types[target_idx == -1] = (
-        #     0  # Stop token for molecules without deleted nodes
-        # )
-        # target_pos = data.pos[target_idx]
-        # target_pos[target_idx == -1] = 0.0
-
         subset_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
         subset_mask[subset_idx] = 1
 
@@ -308,10 +248,6 @@ class MolGen(LightningModule):
             batch_target,
             stop_tokens,
         )
-
-    def data_augmentation(self, data: Data) -> Data:
-        # Implement data augmentation logic here
-        return data
 
     def configure_optimizers(self, betas=(0.9, 0.999)) -> Optimizer:
         # start with all of the candidate parameters
@@ -342,9 +278,8 @@ class MolGen(LightningModule):
             optim_groups,
             lr=self.hparams.learning_rate,
             betas=betas,
-            fused=True,  # **extra_args
+            fused=True,
         )
-        # print(f"using fused AdamW: {use_fused}")
 
         return optimizer
 

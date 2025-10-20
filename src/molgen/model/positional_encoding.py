@@ -1,4 +1,5 @@
 # Credit: https://github.com/apple/ml-simplefold/blob/main/src/simplefold/model/torch/pos_embed.py
+# This file was taken from the SimpleFold repository as is.
 
 import math
 import torch
@@ -105,28 +106,6 @@ def compute_axial_cis(
         freqs_all.append(freq_cis_i)
     freqs_cis = torch.cat(freqs_all, dim=-1)
     return freqs_cis
-
-
-# def compute_axial_cis(
-#     ts: torch.Tensor,
-#     in_dim: int,
-#     dim: int,
-#     theta: float = 100.0,
-# ):
-#     B, N, D = ts.shape
-#     freqs_all = []
-#     interval = 2 * (dim // (2 * in_dim))  # Adjust interval to ensure consistent frequency bands
-#     for i in range(in_dim):
-#         freq = 1.0 / (
-#             theta ** (torch.arange(0, dim, interval)[: (dim // interval)].float() / dim)
-#         ).to(ts.device)
-#         t = ts[..., i].flatten()
-#         freq_i = torch.outer(t, freq)
-#         freq_cis_i = torch.polar(torch.ones_like(freq_i), freq_i)
-#         freq_cis_i = freq_cis_i.view(B, N, -1)
-#         freqs_all.append(freq_cis_i)
-#     freqs_cis = torch.cat(freqs_all, dim=-1)
-#     return freqs_cis
 
 
 def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor):

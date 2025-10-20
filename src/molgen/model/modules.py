@@ -41,7 +41,7 @@ class MaskedBidirectionalAttention(nn.Module):
         self.n_head = n_head
         self.n_embd = n_embd
         self.dropout = dropout
-        self.pos_embedder = pos_embedder  # Placeholder for positional embedding module
+        self.pos_embedder = pos_embedder
 
     def forward(self, x, attn_mask=None, pos=None):
         B, T, C = (
@@ -71,55 +71,6 @@ class MaskedBidirectionalAttention(nn.Module):
             attn_mask=attn_mask,  # Pass the attention mask here
             dropout_p=self.dropout if self.training else 0,
             is_causal=False,  # Bidirectional attention, not causal
-        )
-        y = (
-            y.transpose(1, 2).contiguous().view(B, T, C)
-        )  # re-assemble all head outputs side by side
-
-        # output projection
-        y = self.resid_dropout(self.c_proj(y))
-        return y
-
-
-class CausalSelfAttention(nn.Module):
-    def __init__(self, n_embd, n_head, dropout, bias):
-        super().__init__()
-        assert n_embd % n_head == 0
-        # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(n_embd, 3 * n_embd, bias=bias)
-        # output projection
-        self.c_proj = nn.Linear(n_embd, n_embd, bias=bias)
-        # regularization
-        self.attn_dropout = nn.Dropout(dropout)
-        self.resid_dropout = nn.Dropout(dropout)
-        self.n_head = n_head
-        self.n_embd = n_embd
-        self.dropout = dropout
-
-    def forward(self, x):
-        B, T, C = (
-            x.size()
-        )  # batch size, sequence length, embedding dimensionality (n_embd)
-
-        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
-        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(
-            1, 2
-        )  # (B, nh, T, hs)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(
-            1, 2
-        )  # (B, nh, T, hs)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(
-            1, 2
-        )  # (B, nh, T, hs)
-
-        y = torch.nn.functional.scaled_dot_product_attention(
-            q,
-            k,
-            v,
-            attn_mask=None,
-            dropout_p=self.dropout if self.training else 0,
-            is_causal=True,
         )
         y = (
             y.transpose(1, 2).contiguous().view(B, T, C)
@@ -160,62 +111,6 @@ class Block(nn.Module):
         x = x + self.attn(self.ln_1(x), attn_mask=attn_mask, pos=pos)
         x = x + self.mlp(self.ln_2(x))
         return x
-
-
-class PositionalEncodingMixin(ABC):
-    def sinusoidal_positional_encoding(
-        self, positions, pos_embedding_dim, frequency: float = 10000.0
-    ):
-        assert pos_embedding_dim % 2 == 0, "Embedding dimension must be even."
-
-        n_nodes, coord_dim = positions.shape
-        assert coord_dim == 3, "Input positions must have shape (n_nodes, 3)."
-
-        # Ensure the embedding dimension is divisible by 3
-        if pos_embedding_dim % 3 != 0:
-            raise ValueError(
-                f"Embedding dimension ({pos_embedding_dim}) must be divisible by 3 for x, y, z coordinates."
-            )
-
-        if pos_embedding_dim == 0:
-            return torch.empty((n_nodes, 0), device=positions.device)
-
-        # Create a range of frequencies for the sinusoidal encoding
-        div_term = torch.exp(
-            torch.arange(0, pos_embedding_dim // 2, device=positions.device)
-            * -(torch.log(torch.tensor(frequency)) / (pos_embedding_dim // 2))
-        )
-
-        # Initialize the embedding matrix
-        embeddings = torch.zeros((n_nodes, pos_embedding_dim), device=positions.device)
-
-        # Number of dimensions allocated to each coordinate
-        coord_embedding_dim = pos_embedding_dim // 3
-
-        # Apply sinusoidal encoding for each coordinate (x, y, z)
-        for i in range(3):  # Loop over the 3 coordinates
-            pos = positions[:, i][:, torch.newaxis]  # Shape: (n_nodes, 1)
-            sinusoidal = pos * div_term[: coord_embedding_dim // 2]  # Match the size
-            embeddings[
-                :,
-                i * coord_embedding_dim : (i + 1) * coord_embedding_dim,
-            ] = torch.cat([torch.sin(sinusoidal), torch.cos(sinusoidal)], axis=-1)
-
-        return embeddings
-
-
-class SinusoidalPositionalEncoding(torch.nn.Module, PositionalEncodingMixin):
-    def __init__(self, out_dim: int, num_freq: int = 256):
-        super(SinusoidalPositionalEncoding, self).__init__()
-        self.num_freq = num_freq
-        self.out_dim = out_dim
-        self.mlp = torch.nn.Linear(3 * num_freq, out_dim)
-
-    def forward(self, positions):
-        sinusoidal_encoding = self.sinusoidal_positional_encoding(
-            positions, self.num_freq * 3
-        )
-        return self.mlp(sinusoidal_encoding)
 
 
 def pad_and_mask_sequences(sequences, batch_indices):
@@ -492,3 +387,123 @@ def rotate_graphs_randomly(positions, batch_idx):
     )  # Shape: (num_nodes, 3)
 
     return recentered_positions
+
+
+# --- Deprecated classes below, to be removed later --- #
+
+
+class CausalSelfAttention(nn.Module):
+    """Causal Self-Attention layer.
+    This is the implementation as specified in the original GPT implementation.
+    I only keep this here for reference purposes.
+    We might use it later for an ablation study, otherwise it will be deleted at some point.
+    """
+
+    def __init__(self, n_embd, n_head, dropout, bias):
+        super().__init__()
+        assert n_embd % n_head == 0
+        # key, query, value projections for all heads, but in a batch
+        self.c_attn = nn.Linear(n_embd, 3 * n_embd, bias=bias)
+        # output projection
+        self.c_proj = nn.Linear(n_embd, n_embd, bias=bias)
+        # regularization
+        self.attn_dropout = nn.Dropout(dropout)
+        self.resid_dropout = nn.Dropout(dropout)
+        self.n_head = n_head
+        self.n_embd = n_embd
+        self.dropout = dropout
+
+    def forward(self, x):
+        B, T, C = (
+            x.size()
+        )  # batch size, sequence length, embedding dimensionality (n_embd)
+
+        # calculate query, key, values for all heads in batch and move head forward to be the batch dim
+        q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+        k = k.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
+        q = q.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
+        v = v.view(B, T, self.n_head, C // self.n_head).transpose(
+            1, 2
+        )  # (B, nh, T, hs)
+
+        y = torch.nn.functional.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=None,
+            dropout_p=self.dropout if self.training else 0,
+            is_causal=True,
+        )
+        y = (
+            y.transpose(1, 2).contiguous().view(B, T, C)
+        )  # re-assemble all head outputs side by side
+
+        # output projection
+        y = self.resid_dropout(self.c_proj(y))
+        return y
+
+
+class PositionalEncodingMixin(ABC):
+    """Mixin class for positional encoding.
+
+    My own implementation of Fourier features, currently not used.
+    If we stick with the SimpleFold implementation, this class will be deleted.
+    """
+
+    def sinusoidal_positional_encoding(
+        self, positions, pos_embedding_dim, frequency: float = 10000.0
+    ):
+        assert pos_embedding_dim % 2 == 0, "Embedding dimension must be even."
+
+        n_nodes, coord_dim = positions.shape
+        assert coord_dim == 3, "Input positions must have shape (n_nodes, 3)."
+
+        # Ensure the embedding dimension is divisible by 3
+        if pos_embedding_dim % 3 != 0:
+            raise ValueError(
+                f"Embedding dimension ({pos_embedding_dim}) must be divisible by 3 for x, y, z coordinates."
+            )
+
+        if pos_embedding_dim == 0:
+            return torch.empty((n_nodes, 0), device=positions.device)
+
+        # Create a range of frequencies for the sinusoidal encoding
+        div_term = torch.exp(
+            torch.arange(0, pos_embedding_dim // 2, device=positions.device)
+            * -(torch.log(torch.tensor(frequency)) / (pos_embedding_dim // 2))
+        )
+
+        # Initialize the embedding matrix
+        embeddings = torch.zeros((n_nodes, pos_embedding_dim), device=positions.device)
+
+        # Number of dimensions allocated to each coordinate
+        coord_embedding_dim = pos_embedding_dim // 3
+
+        # Apply sinusoidal encoding for each coordinate (x, y, z)
+        for i in range(3):  # Loop over the 3 coordinates
+            pos = positions[:, i][:, torch.newaxis]  # Shape: (n_nodes, 1)
+            sinusoidal = pos * div_term[: coord_embedding_dim // 2]  # Match the size
+            embeddings[
+                :,
+                i * coord_embedding_dim : (i + 1) * coord_embedding_dim,
+            ] = torch.cat([torch.sin(sinusoidal), torch.cos(sinusoidal)], axis=-1)
+
+        return embeddings
+
+
+class SinusoidalPositionalEncoding(torch.nn.Module, PositionalEncodingMixin):
+    def __init__(self, out_dim: int, num_freq: int = 256):
+        super(SinusoidalPositionalEncoding, self).__init__()
+        self.num_freq = num_freq
+        self.out_dim = out_dim
+        self.mlp = torch.nn.Linear(3 * num_freq, out_dim)
+
+    def forward(self, positions):
+        sinusoidal_encoding = self.sinusoidal_positional_encoding(
+            positions, self.num_freq * 3
+        )
+        return self.mlp(sinusoidal_encoding)
