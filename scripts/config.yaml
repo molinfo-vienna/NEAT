@@ -6,7 +6,7 @@ n_embd: 720
 dropout: 0.2
 bias: True
 data_set: QM9
-batch_size: 256
+batch_size: 512
 data_split: edm_split
 accumulate_grad_batches: 1
 max_epochs: 500

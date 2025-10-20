@@ -99,6 +99,8 @@ class MolGen(LightningModule):
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
+        self.target_set_max_size = -1
+
     def get_num_params(self):
         """
         Return the number of parameters in the model.
@@ -137,7 +139,9 @@ class MolGen(LightningModule):
             pos_target,
             batch_target,
             stop_tokens,
-        ) = self.source_target_split(data, device=device)
+        ) = self.source_target_split(
+            data, target_set_max_size=self.target_set_max_size, device=device
+        )
 
         # Embedding layers for atom types and positions
         atom_type_embeddings = self.atom_type_embedding(x_source)
@@ -209,15 +213,21 @@ class MolGen(LightningModule):
 
         return logits.mean(), loss_ce.mean(), loss_fm.mean()
 
-    def source_target_split(self, data: Data, device=None):
+    def source_target_split(
+        self, data: Data, target_set_max_size: int = -1, device=None
+    ):
         atom_counts = torch.bincount(data.batch)
+
         # Randomly select a subset of atoms per molecule
         uniform_distribution = torch.rand(atom_counts.shape, device=device) * 0.999
-        # deletion_limit = torch.ones_like(atom_counts, device=device)
-        # atoms_to_delete = ((deletion_limit.float() + 3) * uniform_distribution).int()
+        deletion_limit = atom_counts - 1
+        if target_set_max_size > 0:
+            deletion_limit = torch.min(
+                torch.ones_like(deletion_limit) * target_set_max_size, deletion_limit
+            )
 
-        # This samples between 0 and N-1 atoms to delete per molecule
-        atoms_to_delete = ((atom_counts.float()) * uniform_distribution).int()
+        # This samples between 0 and up to N-1 atoms to delete per molecule
+        atoms_to_delete = ((deletion_limit.float() + 1) * uniform_distribution).int()
         atoms_to_keep = atom_counts - atoms_to_delete
         random_indices = torch.cat(
             [

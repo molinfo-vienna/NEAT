@@ -9,7 +9,7 @@ import torch
 import torch_geometric
 
 from molgen.dataset import DataModule
-from molgen.model import MolGen
+from molgen.model import MolGen, CurriculumLearningScheduler
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -46,10 +46,6 @@ def training(args: argparse.Namespace) -> None:
     )
     datamodule.setup()
 
-    checkpoint_callback = ModelCheckpoint(
-        monitor="val/val_loss",
-        mode="min",
-    )
     accumulate_grad_batches = params.pop("accumulate_grad_batches")
 
     # Initialize and train model
@@ -62,13 +58,20 @@ def training(args: argparse.Namespace) -> None:
         name=f"{MODEL.__name__}",
         default_hp_metric=False,
     )
+    callbacks = [
+        CurriculumLearningScheduler(1, 5),
+        ModelCheckpoint(
+            monitor="val/val_loss",
+            mode="min",
+        ),
+    ]
     trainer = Trainer(
         devices=1,
         max_epochs=params["max_epochs"],
         accelerator="gpu",
         logger=tb_logger,
         log_every_n_steps=8,
-        callbacks=[checkpoint_callback],
+        callbacks=callbacks,
         accumulate_grad_batches=accumulate_grad_batches,
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
