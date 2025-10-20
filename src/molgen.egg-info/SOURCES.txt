@@ -11,6 +11,6 @@ src/molgen/dataset/datamodule.py
 src/molgen/dataset/dataset.py
 src/molgen/dataset/qm9.py
 src/molgen/model/__init__.py
-src/molgen/model/decoder.py
-src/molgen/model/model.py
+src/molgen/model/modules.py
 src/molgen/model/molgen.py
+src/molgen/model/positional_encoding.py

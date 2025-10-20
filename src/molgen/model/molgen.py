@@ -10,8 +10,8 @@ from torch_geometric.data import Data
 from torch.optim import Optimizer, AdamW
 from torch.nn import functional as F
 from torch_geometric.nn.models import MLP as GeoMLP
+from torch_geometric.nn.pool import global_add_pool
 
-from .decoder import Decoder
 from .modules import (
     LayerNorm,
     MLP,
@@ -47,10 +47,10 @@ class MolGen(LightningModule):
         self.coord_proj = torch.nn.Identity()
 
         # Positional embedding layer for sequences (only important for causal transformer) --> Probably not necessary
-        # TODO: Throw this out!
-        self.sequential_positional_embedding = torch.nn.Embedding(
-            self.hparams.block_size, self.hparams.n_embd
-        )
+        # # TODO: Throw this out!
+        # self.sequential_positional_embedding = torch.nn.Embedding(
+        #     self.hparams.block_size, self.hparams.n_embd
+        # )
 
         # Dropout layer
         self.dropout_layer = torch.nn.Dropout(self.hparams.dropout)
@@ -108,7 +108,11 @@ class MolGen(LightningModule):
         # )
 
         # Positional embedding for flow matching
-        self.cartesian_positional_embedding_fm = SinusoidalPositionalEncoding(
+        # self.cartesian_positional_embedding_fm = SinusoidalPositionalEncoding(
+        #     out_dim=self.hparams.n_embd
+        # )
+
+        self.cartesian_positional_embedding_fm = FourierPositionEncoding(
             out_dim=self.hparams.n_embd
         )
 
@@ -142,8 +146,8 @@ class MolGen(LightningModule):
         params are actually used as weights in the final layer, so we include them.
         """
         n_params = sum(p.numel() for p in self.parameters())
-        if non_embedding:
-            n_params -= self.sequential_positional_embedding.weight.numel()
+        # if non_embedding:
+        #     n_params -= self.sequential_positional_embedding.weight.numel()
         return n_params
 
     def _init_weights(self, module):
@@ -164,11 +168,100 @@ class MolGen(LightningModule):
             sequence_length <= self.hparams.block_size
         ), f"Cannot forward sequence of length {sequence_length}, block size is only {self.hparams.block_size}"
 
+        # We split the molecular data into source and target atom sets
+        # The indexing tensors point to the same molecules as in the original batch
+        # The atom set order is randomized during sampling, which should be fine
+        (
+            x_source,
+            pos_source,
+            batch_source,
+            x_target,
+            pos_target,
+            batch_target,
+            stop_tokens,
+        ) = self.source_target_split(data, device=device)
+        num_stop_tokens = stop_tokens.sum()
+
+        # forward the GPT model itself
+        atom_type_embeddings = self.atom_type_embedding(
+            x_source
+        )  # token embeddings of shape (b, t, n_embd)
+        cartesian_positional_embeddings = self.cartesian_positional_embedding(
+            pos_source
+        )  # position embeddings of shape (t, n_embd)
+        x = self.dropout_layer(atom_type_embeddings + cartesian_positional_embeddings)
+
+        # Here I need to reshape the input to (batch_size, max_seq_length, n_embd)
+        x, mask = pad_and_mask_sequences(x, batch_source)
+        attn_mask = mask.unsqueeze(1).unsqueeze(2)
+        attn_mask = attn_mask.expand(-1, self.hparams.n_head, -1, -1)
+        pos, _ = pad_and_mask_sequences(pos_source, batch_source)
+
+        # Pass through transformer blocks
+        for block in self.transformer_blocks:
+            x = block(x, attn_mask=attn_mask, pos=pos)
+        x = self.output_layer_norm(x)
+        x = x * mask.unsqueeze(-1)
+        output = x.sum(dim=1)  # / atom_counts.unsqueeze(-1)
+        logits = self.linear_output_head(output)
+
+        # --- Atom type / Stop token prediction loss ---
+
+        # Atom type prediction is done with a cross-entropy loss.
+        # Here we compute the CE of the prediction wrt all atoms in the target atom set.
+        # This will be combined with the flow matching MSE loss below via logsumexp
+        # for each molecule.
+        loss_ce = F.cross_entropy(
+            logits[batch_target],
+            x_target.long(),
+            ignore_index=-1,
+            reduction="none",
+        )
+        # Stop tokens need to be handled separately, because here we would map to empty atom sets.
+        prob = F.softmax(logits[stop_tokens], dim=1)  # Stop token probability
+        loss_ce_stop_token = -torch.log(prob[:, 0])  # CE loss for stop tokens
+
+        # --- Here comes the flow matching logic ---
+        n_targets = pos_target.size(0)
+        time_step = torch.rand(n_targets, device=device)
+        time_embeddings = create_time_embeddings(time_step, self.hparams.n_embd)
+        pos_random = torch.randn(n_targets, 3, device=device)
+        interpolation = pos_target - pos_random
+        # t = 0 --> pos_random, t=1 --> target_pos
+        interpolated_pos = pos_random + interpolation * time_step.unsqueeze(1)
+
+        # Does this need its own positional embedding layer? Not sure yet, but doesn't seem like it.
+        # I can probably use the same as above for embedding the source set positions.
+        positional_embedding = self.cartesian_positional_embedding_fm(interpolated_pos)
+
+        # Add embeddings up and predict the vector field
+        x = positional_embedding + time_embeddings
+        x = x + output[batch_target]
+        output_fm = self.flow_matching_mlp(x)
+        loss_fm = torch.mean((output_fm - interpolation) ** 2, dim=1)
+
+        # --- Aggregate CE and FM losses over each target atom set ---
+
+        loss = loss_ce + loss_fm
+        loss = torch.exp(-loss)
+        _, new_target_set_indices = torch.unique(batch_target, return_inverse=True)
+        loss = -torch.log(global_add_pool(loss, new_target_set_indices))
+
+        # Stop tokens do not have a position, so we just add their CE loss directly
+        loss = torch.cat((loss, loss_ce_stop_token))
+
+        return logits.mean(), loss_ce.mean(), loss_fm.mean()
+
+    def source_target_split(self, data: Data, device=None):
+        atom_counts = torch.bincount(data.batch)
+        batch_size = atom_counts.size(0)
         # Randomly select a subset of atoms per molecule
         uniform_distribution = torch.rand(atom_counts.shape, device=device) * 0.999
-        deletion_limit = torch.ones_like(atom_counts, device=device)
-        atoms_to_delete = ((deletion_limit.float() + 1) * uniform_distribution).int()
-        # atoms_to_delete = ((atom_counts.float() + 1) * uniform_distribution).int()
+        # deletion_limit = torch.ones_like(atom_counts, device=device)
+        # atoms_to_delete = ((deletion_limit.float() + 3) * uniform_distribution).int()
+
+        # This samples between 0 and N-1 atoms to delete per molecule
+        atoms_to_delete = ((atom_counts.float()) * uniform_distribution).int()
         atoms_to_keep = atom_counts - atoms_to_delete
         random_indices = torch.cat(
             [
@@ -180,92 +273,41 @@ class MolGen(LightningModule):
             [random_indices[j : j + k] for j, k in zip(data.ptr[0:-1], atoms_to_keep)]
         )
 
-        target_idx = torch.tensor(
-            [
-                random_indices[j + k].item() if i > 0 else -1
-                for i, j, k in zip(atoms_to_delete, data.ptr[0:-1], atoms_to_keep)
-            ],
-            device=device,
-            dtype=torch.long,
+        # target_idx = torch.tensor(
+        #     [
+        #         random_indices[j + k].item() if i > 0 else -1
+        #         for i, j, k in zip(atoms_to_delete, data.ptr[0:-1], atoms_to_keep)
+        #     ],
+        #     device=device,
+        #     dtype=torch.long,
+        # )
+        # target_types = data.x[target_idx]
+        # target_types[target_idx == -1] = (
+        #     0  # Stop token for molecules without deleted nodes
+        # )
+        # target_pos = data.pos[target_idx]
+        # target_pos[target_idx == -1] = 0.0
+
+        subset_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
+        subset_mask[subset_idx] = 1
+
+        x_source = data.x[subset_mask]
+        pos_source = data.pos[subset_mask]
+        batch_source = data.batch[subset_mask]
+        x_target = data.x[~subset_mask]
+        pos_target = data.pos[~subset_mask]
+        batch_target = data.batch[~subset_mask]
+        stop_tokens = atoms_to_delete == 0
+
+        return (
+            x_source,
+            pos_source,
+            batch_source,
+            x_target,
+            pos_target,
+            batch_target,
+            stop_tokens,
         )
-        target_types = data.x[target_idx]
-        target_types[target_idx == -1] = (
-            0  # Stop token for molecules without deleted nodes
-        )
-        target_pos = data.pos[target_idx]
-        target_pos[target_idx == -1] = 0.0
-
-        atom_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
-        atom_mask[subset_idx] = 1
-        data.x = data.x[atom_mask]
-        data.pos = data.pos[atom_mask]
-        data.batch = data.batch[atom_mask]
-
-        # forward the GPT model itself
-        atom_type_embeddings = self.atom_type_embedding(
-            data.x
-        )  # token embeddings of shape (b, t, n_embd)
-        cartesian_positional_embeddings = self.cartesian_positional_embedding(
-            data.pos
-        )  # position embeddings of shape (t, n_embd)
-        x = self.dropout_layer(atom_type_embeddings + cartesian_positional_embeddings)
-
-        # Here I need to reshape the input to (batch_size, max_seq_length, n_embd)
-        x, mask = pad_and_mask_sequences(x, data.batch)
-        attn_mask = mask.unsqueeze(1).unsqueeze(2)
-        attn_mask = attn_mask.expand(-1, self.hparams.n_head, -1, -1)
-        # pos = torch.zeros((data.pos.shape[0], 1), device=device)
-        # pos = torch.cat((pos, data.pos), dim=-1)
-        pos, _ = pad_and_mask_sequences(data.pos, data.batch)
-
-        # Pass through transformer blocks
-        for block in self.transformer_blocks:
-            x = block(x, attn_mask=attn_mask, pos=pos)
-        x = self.output_layer_norm(x)
-        x = x * mask.unsqueeze(-1)
-        output = x.sum(dim=1)  # / atom_counts.unsqueeze(-1)
-
-        logits = self.linear_output_head(output)
-        loss_ce = F.cross_entropy(
-            logits.view(-1, logits.size(-1)),
-            target_types.view(-1).long(),
-            ignore_index=-1,
-            reduction="none",
-        )
-
-        # --- Here comes the flow matching logic ---
-        time_step = torch.rand(batch_size, device=device)
-        time_embeddings = create_time_embeddings(time_step, self.hparams.n_embd)
-        pos_random = torch.randn(batch_size, 3, device=device)  # Shape: (num_graphs, 3)
-        interpolation = target_pos - pos_random
-        # t = 0 --> pos_random, t=1 --> target_pos
-        interpolated_pos = pos_random + interpolation * time_step.unsqueeze(1)
-        positional_embedding = self.cartesian_positional_embedding_fm(
-            interpolated_pos
-        )  # Shape: (num_graphs * seq_length, n_embd)
-        x = positional_embedding + time_embeddings
-        x = x + output
-        output_fm = self.flow_matching_mlp(x)
-        loss_fm = torch.mean((output_fm - interpolation) ** 2, dim=1)
-        # Stop tokens do not have a position so we need to exclude them from the loss
-        loss_fm[target_types == 0] = 0.0
-        loss = loss_ce + loss_fm
-        loss = -torch.logsumexp(-loss, dim=0)
-
-        # if targets is not None:
-        #     # if we are given some desired targets also calculate the loss
-        #     logits = self.linear_output_head(x)
-        #     loss = F.cross_entropy(
-        #         logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1
-        #     )
-        # else:
-        #     # inference-time mini-optimization: only forward the lm_head on the very last position
-        #     logits = self.linear_output_head(
-        #         x[:, [-1], :]
-        #     )  # note: using list [-1] to preserve the time dim
-        #     loss = None
-
-        return logits.mean(), loss_ce.mean(), loss_fm.mean()
 
     def data_augmentation(self, data: Data) -> Data:
         # Implement data augmentation logic here
