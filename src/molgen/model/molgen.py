@@ -230,10 +230,10 @@ class MolGen(LightningModule):
             logits.view(-1, logits.size(-1)),
             target_types.view(-1).long(),
             ignore_index=-1,
+            reduction="none",
         )
 
         # --- Here comes the flow matching logic ---
-
         time_step = torch.rand(batch_size, device=device)
         time_embeddings = create_time_embeddings(time_step, self.hparams.n_embd)
         pos_random = torch.randn(batch_size, 3, device=device)  # Shape: (num_graphs, 3)
@@ -246,11 +246,11 @@ class MolGen(LightningModule):
         x = positional_embedding + time_embeddings
         x = x + output
         output_fm = self.flow_matching_mlp(x)
-        loss_fm = F.mse_loss(
-            output_fm[target_types != 0],
-            interpolation[target_types != 0],
-            reduction="mean",
-        )  # Stop tokens do not have a position so we need to exclude them from the loss
+        loss_fm = torch.mean((output_fm - interpolation) ** 2, dim=1)
+        # Stop tokens do not have a position so we need to exclude them from the loss
+        loss_fm[target_types == 0] = 0.0
+        loss = loss_ce + loss_fm
+        loss = -torch.logsumexp(-loss, dim=0)
 
         # if targets is not None:
         #     # if we are given some desired targets also calculate the loss
@@ -265,7 +265,7 @@ class MolGen(LightningModule):
         #     )  # note: using list [-1] to preserve the time dim
         #     loss = None
 
-        return logits, loss_ce, loss_fm
+        return logits.mean(), loss_ce.mean(), loss_fm.mean()
 
     def data_augmentation(self, data: Data) -> Data:
         # Implement data augmentation logic here
