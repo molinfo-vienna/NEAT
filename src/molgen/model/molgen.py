@@ -11,13 +11,12 @@ from torch_geometric.nn.models import MLP
 from torch_geometric.nn.pool import global_mean_pool
 from torch.nn.functional import one_hot
 
-from .modules import (
+from .attention import (
     LayerNorm,
     Block,
-    pad_and_mask_sequences,
-    create_time_embeddings,
-    rotate_graphs_randomly,
 )
+from .augmentation import RandomRotationAugmentation
+from .utils import pad_and_mask_sequences, create_time_embeddings
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
 from .splitting import SourceTargetSplitter
 
@@ -101,6 +100,7 @@ class MolGen(LightningModule):
         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
         self.splitter = SourceTargetSplitter(splitting_mode="cyclic")
+        self.rotation_augmentation = RandomRotationAugmentation()
         self.target_set_max_size = -1
 
     def get_num_params(self):
@@ -335,7 +335,9 @@ class MolGen(LightningModule):
     def training_step(self, batch: Data, batch_idx: int) -> Tensor:
         """Training step and logging"""
         # data augmentation by random rotation
-        batch.pos = rotate_graphs_randomly(batch.pos, batch.batch)
+        batch.pos = self.rotation_augmentation.rotate_graphs_randomly(
+            batch.pos, batch.batch
+        )
         loss, loss_ce, loss_fm = self.shared_step(batch, batch_idx)
 
         self.log(
