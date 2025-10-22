@@ -10,7 +10,8 @@ from torch_geometric.data import Data
 from torch.optim import Optimizer
 from torch.nn import functional as F
 from torch_geometric.nn.models import MLP
-from torch_geometric.nn.pool import global_add_pool
+from torch_geometric.nn.pool import global_mean_pool
+from torch.nn.functional import one_hot
 
 from .modules import (
     LayerNorm,
@@ -20,6 +21,7 @@ from .modules import (
     rotate_graphs_randomly,
 )
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
+from .splitting import SourceTargetSplitter
 
 
 class MolGen(LightningModule):
@@ -99,6 +101,7 @@ class MolGen(LightningModule):
         # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
+        self.splitter = SourceTargetSplitter(splitting_mode="cyclic")
         self.target_set_max_size = -1
 
     def get_num_params(self):
@@ -123,6 +126,7 @@ class MolGen(LightningModule):
     def forward(self, data):
         device = data.x.device
         atom_counts = torch.bincount(data.batch)
+        batch_size = atom_counts.size(0)
         sequence_length = atom_counts.max()
         assert (
             sequence_length <= self.hparams.block_size
@@ -139,9 +143,7 @@ class MolGen(LightningModule):
             pos_target,
             batch_target,
             stop_tokens,
-        ) = self.source_target_split(
-            data, target_set_max_size=self.target_set_max_size, device=device
-        )
+        ) = self.splitter.create_source_target_split(data, device=device)
 
         # Embedding layers for atom types and positions
         atom_type_embeddings = self.atom_type_embedding(x_source)
@@ -168,96 +170,62 @@ class MolGen(LightningModule):
 
         # Atom type prediction is done with a cross-entropy loss.
         # Here we compute the CE of the prediction wrt all atoms in the target atom set.
-        # This will be combined with the flow matching MSE loss below via logsumexp
-        # for each molecule.
         logits = self.linear_output_head(output)  # Map embeddings to atom type logits
+
+        # Compute the mean probability distribution over the atom types in the target set
+        _, new_target_set_indices = torch.unique(
+            batch_target.clone(), return_inverse=True
+        )
+        x_target_prob = one_hot(x_target.long(), 118).float()
+        x_target_prob = global_mean_pool(x_target_prob.float(), new_target_set_indices)
+
         loss_ce = F.cross_entropy(
-            logits[batch_target],
-            x_target.long(),
+            logits[~stop_tokens],
+            x_target_prob,
             ignore_index=-1,
             reduction="none",
         )
         # Stop tokens need to be handled separately, because here we would map to empty atom sets.
         prob = F.softmax(logits[stop_tokens], dim=1)  # Stop token probability
         loss_ce_stop_token = -torch.log(prob[:, 0])  # CE loss for stop tokens
+        loss_ce = torch.cat((loss_ce, loss_ce_stop_token)).mean()
 
         # --- Here comes the flow matching logic ---
-        n_targets = pos_target.size(0)
-        time_step = torch.rand(n_targets, device=device)
+        n_molecules = batch_size - stop_tokens.sum()
+        n_atoms = new_target_set_indices.size(0)
+        pos_random = torch.randn(n_molecules, 3, device=device)
+        pos_random_expanded = pos_random[new_target_set_indices]
+        time_step = torch.rand(n_atoms, device=device)
         time_embeddings = create_time_embeddings(time_step, self.hparams.n_embd)
-        pos_random = torch.randn(n_targets, 3, device=device)
-        interpolation = pos_target - pos_random
+        interpolation = pos_target - pos_random_expanded
         # t = 0 --> pos_random, t=1 --> target_pos
-        interpolated_pos = pos_random + interpolation * time_step.unsqueeze(1)
+        interpolated_pos = pos_random_expanded + interpolation * time_step.unsqueeze(1)
 
         # Does this need its own positional embedding layer? Not sure yet, but doesn't seem like it.
         # We can probably use the same as above for embedding the source set positions.
         positional_embedding = self.cartesian_positional_embedding_fm(interpolated_pos)
 
+        # Now we need an etom embedding of the target atom types too
+        target_atom_type_embeddings = self.atom_type_embedding(x_target)
+
         # Add embeddings up and predict the vector field
-        x = positional_embedding + time_embeddings
-        x = x + output[batch_target]
+        x = (
+            positional_embedding
+            + time_embeddings
+            + target_atom_type_embeddings
+            + output[batch_target]
+        )
         output_fm = self.flow_matching_mlp(x)
-        loss_fm = torch.mean((output_fm - interpolation) ** 2, dim=1)
+        loss_fm = torch.mean((output_fm - interpolation) ** 2)
 
         # --- Aggregate CE and FM losses over each target atom set ---
 
         # logsumexp takes effectively the minimum atom-wise loss contribution per molecule
         loss = loss_ce + loss_fm
-        loss = torch.exp(-loss)
-        _, new_target_set_indices = torch.unique(batch_target, return_inverse=True)
-        loss = -torch.log(global_add_pool(loss, new_target_set_indices))
 
         # Stop tokens do not have a position, so we just add their CE loss directly
-        loss = torch.cat((loss, loss_ce_stop_token))
 
-        return logits.mean(), loss_ce.mean(), loss_fm.mean()
-
-    def source_target_split(
-        self, data: Data, target_set_max_size: int = -1, device=None
-    ):
-        atom_counts = torch.bincount(data.batch)
-
-        # Randomly select a subset of atoms per molecule
-        uniform_distribution = torch.rand(atom_counts.shape, device=device) * 0.999
-        deletion_limit = atom_counts - 1
-        if target_set_max_size > 0:
-            deletion_limit = torch.min(
-                torch.ones_like(deletion_limit) * target_set_max_size, deletion_limit
-            )
-
-        # This samples between 0 and up to N-1 atoms to delete per molecule
-        atoms_to_delete = ((deletion_limit.float() + 1) * uniform_distribution).int()
-        atoms_to_keep = atom_counts - atoms_to_delete
-        random_indices = torch.cat(
-            [
-                (torch.randperm(i, device=device) + k)
-                for i, k in zip(atom_counts, data.ptr[0:-1])
-            ]
-        )
-        subset_idx = torch.cat(
-            [random_indices[j : j + k] for j, k in zip(data.ptr[0:-1], atoms_to_keep)]
-        )
-        subset_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
-        subset_mask[subset_idx] = 1
-
-        x_source = data.x[subset_mask]
-        pos_source = data.pos[subset_mask]
-        batch_source = data.batch[subset_mask]
-        x_target = data.x[~subset_mask]
-        pos_target = data.pos[~subset_mask]
-        batch_target = data.batch[~subset_mask]
-        stop_tokens = atoms_to_delete == 0
-
-        return (
-            x_source,
-            pos_source,
-            batch_source,
-            x_target,
-            pos_target,
-            batch_target,
-            stop_tokens,
-        )
+        return loss, loss_ce, loss_fm
 
     def configure_optimizers(self, betas=(0.9, 0.999)) -> Optimizer:
         # start with all of the candidate parameters
@@ -294,19 +262,19 @@ class MolGen(LightningModule):
         return optimizer
 
     def shared_step(self, batch: Data, batch_idx: int) -> Tensor:
-        logits, loss_ce, loss_fm = self(batch)
+        loss, loss_ce, loss_fm = self(batch)
 
-        return loss_ce, loss_fm
+        return loss, loss_ce, loss_fm
 
     def training_step(self, batch: Data, batch_idx: int) -> Tensor:
         """Training step and logging"""
         # data augmentation by random rotation
         batch.pos = rotate_graphs_randomly(batch.pos, batch.batch)
-        loss_ce, loss_fm = self.shared_step(batch, batch_idx)
+        loss, loss_ce, loss_fm = self.shared_step(batch, batch_idx)
 
         self.log(
             "train/train_loss",
-            loss_ce + loss_fm,
+            loss,
             prog_bar=True,
             on_step=True,
             on_epoch=False,
@@ -332,14 +300,14 @@ class MolGen(LightningModule):
             reduce_fx="mean",
         )
 
-        return loss_ce + loss_fm
+        return loss
 
     def validation_step(self, batch: Data, batch_idx: int) -> Tensor:
-        loss_ce, loss_fm = self.shared_step(batch, batch_idx)
+        loss, loss_ce, loss_fm = self.shared_step(batch, batch_idx)
 
         self.log(
             "val/val_loss",
-            loss_ce + loss_fm,
+            loss,
             prog_bar=True,
             on_step=False,
             on_epoch=True,
@@ -362,7 +330,7 @@ class MolGen(LightningModule):
             batch_size=len(batch),
         )
 
-        return loss_ce + loss_fm
+        return loss
 
     def predict_step(
         self, batch: Data, batch_idx: int = 0

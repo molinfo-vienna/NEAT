@@ -59,7 +59,7 @@ def training(args: argparse.Namespace) -> None:
         default_hp_metric=False,
     )
     callbacks = [
-        CurriculumLearningScheduler(1, 5),
+        # CurriculumLearningScheduler(1, 25, 1.01),
         ModelCheckpoint(
             monitor="val/val_loss",
             mode="min",

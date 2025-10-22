@@ -9,6 +9,6 @@ data_set: QM9
 batch_size: 512
 data_split: edm_split
 accumulate_grad_batches: 1
-max_epochs: 500
+max_epochs: 1000
 weight_decay: 1.e-6
 learning_rate: 1.e-4

@@ -12,6 +12,8 @@ import numpy as np
 
 from tqdm import tqdm
 from rdkit import Chem
+import networkx as nx
+
 import torch
 from torch_geometric.data import InMemoryDataset, Data
 from torch_geometric.transforms import ToUndirected
@@ -122,27 +124,87 @@ class DataSet(InMemoryDataset):
     @staticmethod
     def process_molecule(mol):
         try:
+            # Some molecules contain multiple fragements, here we pic the largest one
+            frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
+            mol = max(frags, key=lambda frag: frag.GetNumAtoms())
+
+            # Node features: Atomic numbers
             x = torch.tensor(
                 [atom.GetAtomicNum() for atom in mol.GetAtoms()], dtype=torch.int32
             )
+
+            # Node positions: 3D coordinates
             pos = torch.tensor(mol.GetConformer().GetPositions(), dtype=torch.float32)
             pos = pos - pos.mean(dim=0, keepdim=True)
 
-            # zero-center coords and do PCA
-            # U, _, _ = np.linalg.svd(pos.T)
-            # if np.linalg.det(U) < 0:
-            #     U[:, -1] *= -1
-            # pos = pos @ U
+            # Edge index: Bond connections
+            edge_index = []
+            edge_attr = []
 
-            # Create a PyG Data object
+            for bond in mol.GetBonds():
+                i = bond.GetBeginAtomIdx()
+                j = bond.GetEndAtomIdx()
+                edge_index.append((i, j))
+                edge_index.append((j, i))  # Add reverse direction for undirected graph
+
+                # Bond attributes: OHE for bond type, aromaticity, and ring membership
+                bond_type = bond.GetBondType()
+                bond_type_ohe = {
+                    Chem.rdchem.BondType.SINGLE: [1, 0, 0, 0],
+                    Chem.rdchem.BondType.DOUBLE: [0, 1, 0, 0],
+                    Chem.rdchem.BondType.TRIPLE: [0, 0, 1, 0],
+                    Chem.rdchem.BondType.AROMATIC: [0, 0, 0, 1],
+                }.get(
+                    bond_type, [0, 0, 0, 0]
+                )  # Default to [0, 0, 0, 0] if bond type is unknown
+
+                is_aromatic = int(bond.GetIsAromatic())
+                in_ring = int(bond.IsInRing())
+
+                # Combine bond attributes
+                edge_attr.append(bond_type_ohe + [is_aromatic, in_ring])
+                edge_attr.append(
+                    bond_type_ohe + [is_aromatic, in_ring]
+                )  # Reverse direction
+
+            # Convert edge_index and edge_attr to tensors
+            edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+            edge_attr = torch.tensor(edge_attr, dtype=torch.float32)
+
+            # Generate the Minimum Spanning Tree (MST)
+            G = nx.Graph()
+            for i, j in edge_index.t().tolist():
+                G.add_edge(i, j)
+
+            mst = nx.minimum_spanning_tree(G)  # Compute MST using NetworkX
+            edge_index_mst = (
+                torch.tensor(list(mst.edges), dtype=torch.long).t().contiguous()
+            )
+
+            # Also store the tree depth in the data object
+            root_node = list(mst.nodes)[0]
+            depths = nx.single_source_shortest_path_length(mst, root_node)
+
+            # Compute edge hierarchy levels
+            edge_hierarchy = []
+            for i, j in mst.edges:
+                # The hierarchical level of the edge is the maximum depth of its two nodes
+                edge_hierarchy.append(max(depths[i], depths[j]))
+
+            edge_hierarchy = torch.tensor(edge_hierarchy, dtype=torch.long)
+            diameter = nx.diameter(mst)
+
+            # Create PyG Data object
             data = Data(
                 x=x,
                 pos=pos,
-                #    edge_index=edge_index,
-                #    edge_attr=edge_attr,
+                edge_index=edge_index,
+                edge_attr=edge_attr,
+                edge_index_mst=edge_index_mst,
+                edge_attr_mst=edge_hierarchy,
+                diameter=diameter,
             )
-            #transform = ToUndirected()
-            #data = transform(data)
+
             return data
 
         except Exception as e:
