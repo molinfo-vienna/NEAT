@@ -132,90 +132,151 @@ class MolGen(LightningModule):
             sequence_length <= self.hparams.block_size
         ), f"Cannot forward sequence of length {sequence_length}, block size is only {self.hparams.block_size}"
 
-        # We split the molecular data into source and target atom sets
-        # The indexing tensors point to the same molecules as in the original batch
-        # The atom set order is randomized during sampling, which should be fine
+        # We split the molecular data into source and target atom sets.
+        # The indexing tensors point to the same molecules as in the original batch.
+        # The source set contains at least one atom, and at most all atoms.
+        # If it contains all atoms, then the target set will be empty.
+        # The stop tokens mask indicates which molecules have empty target sets.
+        # TODO: Make sure this sampling procedure really does what we want.
         (
-            x_source,
-            pos_source,
-            batch_source,
-            x_target,
-            pos_target,
-            batch_target,
-            stop_tokens,
+            x_source,  # [n_source_atoms]
+            pos_source,  # [n_source_atoms, 3]
+            batch_source,  # [n_source_atoms]
+            x_target,  # [n_target_atoms]
+            pos_target,  # [n_target_atoms, 3]
+            batch_target,  # [n_target_atoms]
+            stop_tokens,  # [n_molecules]
         ) = self.splitter.create_source_target_split(data, device=device)
 
         # Embedding layers for atom types and positions
-        atom_type_embeddings = self.atom_type_embedding(x_source)
-        cartesian_positional_embeddings = self.cartesian_positional_embedding(
+        atom_type_embeddings = self.atom_type_embedding(
+            x_source
+        )  # [n_source_atoms, n_embd]
+        fourier_positional_embeddings = self.cartesian_positional_embedding(
             pos_source
-        )
-        x = self.dropout_layer(atom_type_embeddings + cartesian_positional_embeddings)
+        )  # [n_source_atoms, n_embd]
+        x = self.dropout_layer(
+            atom_type_embeddings + fourier_positional_embeddings
+        )  # [n_source_atoms, n_embd]
 
-        # Here we need to reshape the input to (batch_size, max_seq_length, n_embd)
+        # Here we need to reshape the input to [batch_size, max_seq_length, n_embd]
         # This could also be done with sequence packing, but for now we keep it simple
-        x, mask = pad_and_mask_sequences(x, batch_source)
-        attn_mask = mask.unsqueeze(1).unsqueeze(2)
-        attn_mask = attn_mask.expand(-1, self.hparams.n_head, -1, -1)
-        pos, _ = pad_and_mask_sequences(pos_source, batch_source)
+        # The output tensor is padded with zeros for all molecules that have less atoms
+        # than the largest source atom set in the batch. The atom mask keeps track of
+        # which entries correspond to atoms and padding.
+        x, atom_mask = pad_and_mask_sequences(
+            x, batch_source
+        )  # [n_molecules, max_seq_length, n_embd], [n_molecules, max_seq_length]
+
+        # The attention mask corresponds to the atom mask, but needs to be broadcasted
+        # to the number of attention heads.
+        attn_mask = atom_mask.unsqueeze(1).unsqueeze(
+            2
+        )  # [n_molecules, 1, 1, max_seq_length]
+        attn_mask = attn_mask.expand(
+            -1, self.hparams.n_head, -1, -1
+        )  # [n_molecules, n_head, 1, max_seq_length]
+
+        # The positional need to be padded in the same way as the atom embeddings.
+        # This will be needed for applying the rotary positional embeddings in the transformer blocks.
+        pos, _ = pad_and_mask_sequences(
+            pos_source, batch_source
+        )  # [n_molecules, max_seq_length, 3]
 
         # Pass through transformer blocks
         for block in self.transformer_blocks:
-            x = block(x, attn_mask=attn_mask, pos=pos)
-        x = self.output_layer_norm(x)
-        x = x * mask.unsqueeze(-1)
-        output = x.sum(dim=1)  # Pooling of atom embeddings into molecule embedding
+            x = block(
+                x, attn_mask=attn_mask, pos=pos
+            )  # [n_molecules, max_seq_length, n_embd]
+        x = self.output_layer_norm(x)  # [n_molecules, max_seq_length, n_embd]
+
+        # During the forward pass through the trandformer layers, the zero-paddings
+        # get filled with non-zero values. This should not be a problem, since these
+        # are masked out in the attention mechanism, but before pooling the atom
+        # embeddings into a molecule embedding, we re-apply the atom mask.
+        # TODO: Investigate where this behavior comes from, maybe it influences batch statistics of the MLP and LayerNorms?
+        x = x * atom_mask.unsqueeze(-1)  # [n_molecules, max_seq_length, n_embd]
+
+        # Now we can pool the atom embeddings by summation along the max_seq_length dimension
+        # TODO: Investigate how attention pooling works here.
+        source_set_representation = x.sum(
+            dim=1
+        )  # Pooling of atom embeddings into molecule embedding
 
         # --- Atom type / Stop token prediction loss ---
 
         # Atom type prediction is done with a cross-entropy loss.
-        # Here we compute the CE of the prediction wrt all atoms in the target atom set.
-        logits = self.linear_output_head(output)  # Map embeddings to atom type logits
+        # Importantly, since we can have multiple atoms in the target set per source set,
+        # we are modelling a target type *distribution*. This distribution is the mean
+        # over the one-hot encodings of the target atom types.
 
-        # Compute the mean probability distribution over the atom types in the target set
-        _, new_target_set_indices = torch.unique(
+        # (1) Map target atoms indices to contiguous indices to avoid errors in the aggregation step.
+        _, batch_target_contiguous = torch.unique(
             batch_target.clone(), return_inverse=True
         )
+        # (2) Take the mean over the one-hot encodings of the target atom types
         x_target_prob = one_hot(x_target.long(), 118).float()
-        x_target_prob = global_mean_pool(x_target_prob.float(), new_target_set_indices)
+        x_target_prob = global_mean_pool(x_target_prob.float(), batch_target_contiguous)
 
+        # (3) Compute the cross-entropy loss between predicted logits and target type distributions
+        logits = self.linear_output_head(
+            source_set_representation
+        )  # Map embeddings to atom type logits
         loss_ce = F.cross_entropy(
             logits[~stop_tokens],
             x_target_prob,
             ignore_index=-1,
             reduction="none",
         )
-        # Stop tokens need to be handled separately, because here we would map to empty atom sets.
+        # (4) Stop tokens need to be handled separately, because here we would map to empty atom sets.
         prob = F.softmax(logits[stop_tokens], dim=1)  # Stop token probability
         loss_ce_stop_token = -torch.log(prob[:, 0])  # CE loss for stop tokens
         loss_ce = torch.cat((loss_ce, loss_ce_stop_token)).mean()
 
         # --- Here comes the flow matching logic ---
-        n_molecules = batch_size - stop_tokens.sum()
-        n_atoms = new_target_set_indices.size(0)
-        pos_random = torch.randn(n_molecules, 3, device=device)
-        pos_random_expanded = pos_random[new_target_set_indices]
-        time_step = torch.rand(n_atoms, device=device)
-        time_embeddings = create_time_embeddings(time_step, self.hparams.n_embd)
-        interpolation = pos_target - pos_random_expanded
-        # t = 0 --> pos_random, t=1 --> target_pos
-        interpolated_pos = pos_random_expanded + interpolation * time_step.unsqueeze(1)
+        n_target_sets = (
+            batch_size - stop_tokens.sum()
+        )  # Number of non-empty target sets
+        n_target_atoms = len(
+            batch_target_contiguous
+        )  # Num atoms in non-empty target sets
 
-        # Does this need its own positional embedding layer? Not sure yet, but doesn't seem like it.
-        # We can probably use the same as above for embedding the source set positions.
-        positional_embedding = self.cartesian_positional_embedding_fm(interpolated_pos)
+        # (1) We sample a random position for each non_empty target set
+        pos_random = torch.randn(n_target_sets, 3, device=device)  # [n_target_sets, 3]
 
-        # Now we need an etom embedding of the target atom types too
-        target_atom_type_embeddings = self.atom_type_embedding(x_target)
+        # (2) We need to expand this to the number of atoms in the target sets, this is
+        # number conditional paths we are regressing in the CFM objective. For each
+        # possible path, we draw a random time step, and compute the interpolated position
+        # between the random and target position.
+        # Interpolation: t = 0 --> pos_random, t=1 --> target_pos
+        pos_random_expanded = pos_random[batch_target_contiguous]  # [n_target_atoms, 3]
+        time_step = torch.rand(n_target_atoms, device=device)  # [n_target_atoms]
+        time_embeddings = create_time_embeddings(
+            time_step, self.hparams.n_embd
+        )  # [n_target_atoms, n_embd]
+        interpolation = pos_target - pos_random_expanded  # [n_target_atoms, 3]
+        interpolated_pos = pos_random_expanded + interpolation * time_step.unsqueeze(
+            1
+        )  # [n_target_atoms, 3]
+        # TODO: Maybe use weight tying with the other positional embedding layer?
+        positional_embedding = self.cartesian_positional_embedding_fm(
+            interpolated_pos
+        )  # [n_target_atoms, n_embd]
 
-        # Add embeddings up and predict the vector field
+        # (3) Each CFM paths are conditioned on the type of the respective target atoms,
+        # so we need to include this information in the flow matching condition.
+        target_atom_type_embeddings = self.atom_type_embedding(
+            x_target
+        )  # [n_target_atoms, n_embd]
+
+        # (4) Add embeddings up and predict the vector field
         x = (
             positional_embedding
             + time_embeddings
             + target_atom_type_embeddings
-            + output[batch_target]
-        )
-        output_fm = self.flow_matching_mlp(x)
+            + source_set_representation[batch_target]  # [n_target_atoms, n_embd]
+        )  # [n_target_atoms, n_embd]
+        output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
         loss_fm = torch.mean((output_fm - interpolation) ** 2)
 
         # --- Aggregate CE and FM losses over each target atom set ---
