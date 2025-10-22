@@ -1,7 +1,5 @@
 from typing import Union
-import inspect
 import math
-from abc import ABC
 
 import torch
 from torch import Tensor
@@ -37,7 +35,7 @@ class MolGen(LightningModule):
         )
 
         # Fourier features for embedding of Cartesian coordinates
-        self.cartesian_positional_embedding = FourierPositionEncoding(
+        self.fourier_embedding_layer = FourierPositionEncoding(
             out_dim=self.hparams.n_embd
         )
 
@@ -78,11 +76,12 @@ class MolGen(LightningModule):
         self.atom_type_embedding.weight = self.linear_output_head.weight
 
         # So far it is the GPT logic, Flow Matching only needs an additional MLP
-        self.cartesian_positional_embedding_fm = FourierPositionEncoding(
+        # TODO: Do we really need a seperate positional embedding layer here?
+        self.fourier_embedding_layer_fm = FourierPositionEncoding(
             out_dim=self.hparams.n_embd
         )
 
-        # A simple MLP with layer norm used for the denoising step
+        # A simple MLP with layer norm used for the flow network
         self.flow_matching_mlp = MLP(
             channel_list=[self.hparams.n_embd, self.hparams.n_embd, 3],
             dropout=self.hparams.dropout,
@@ -116,6 +115,7 @@ class MolGen(LightningModule):
         return n_params
 
     def _init_weights(self, module):
+        """Initialize weights as in NanoGPT"""
         if isinstance(module, torch.nn.Linear):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
@@ -127,10 +127,10 @@ class MolGen(LightningModule):
         device = data.x.device
         atom_counts = torch.bincount(data.batch)
         batch_size = atom_counts.size(0)
-        sequence_length = atom_counts.max()
+        max_atom_count = atom_counts.max()
         assert (
-            sequence_length <= self.hparams.block_size
-        ), f"Cannot forward sequence of length {sequence_length}, block size is only {self.hparams.block_size}"
+            max_atom_count <= self.hparams.block_size
+        ), f"Cannot forward sequence of length {max_atom_count}, block size is only {self.hparams.block_size}"
 
         # We split the molecular data into source and target atom sets.
         # The indexing tensors point to the same molecules as in the original batch.
@@ -152,56 +152,55 @@ class MolGen(LightningModule):
         atom_type_embeddings = self.atom_type_embedding(
             x_source
         )  # [n_source_atoms, n_embd]
-        fourier_positional_embeddings = self.cartesian_positional_embedding(
+        fourier_positional_embeddings = self.fourier_embedding_layer(
             pos_source
         )  # [n_source_atoms, n_embd]
         x = self.dropout_layer(
             atom_type_embeddings + fourier_positional_embeddings
         )  # [n_source_atoms, n_embd]
 
-        # Here we need to reshape the input to [batch_size, max_seq_length, n_embd]
-        # This could also be done with sequence packing, but for now we keep it simple
-        # The output tensor is padded with zeros for all molecules that have less atoms
+        # Here we need to reshape the input to [batch_size, max_atom_count, n_embd].
+        # This could also be done with sequence packing, but for now we keep it simple.
+        # The output tensor is padded with zeros for all source sets with less atoms
         # than the largest source atom set in the batch. The atom mask keeps track of
         # which entries correspond to atoms and padding.
         x, atom_mask = pad_and_mask_sequences(
             x, batch_source
-        )  # [n_molecules, max_seq_length, n_embd], [n_molecules, max_seq_length]
+        )  # [n_molecules, max_atom_count, n_embd], [n_molecules, max_atom_count]
 
         # The attention mask corresponds to the atom mask, but needs to be broadcasted
         # to the number of attention heads.
         attn_mask = atom_mask.unsqueeze(1).unsqueeze(
             2
-        )  # [n_molecules, 1, 1, max_seq_length]
+        )  # [n_molecules, 1, 1, max_atom_count]
         attn_mask = attn_mask.expand(
             -1, self.hparams.n_head, -1, -1
-        )  # [n_molecules, n_head, 1, max_seq_length]
+        )  # [n_molecules, n_head, 1, max_atom_count]
 
-        # The positional need to be padded in the same way as the atom embeddings.
-        # This will be needed for applying the rotary positional embeddings in the transformer blocks.
+        # The positions need to be padded in the same way as the atom embeddings.
+        # This will be needed for applying the rotary positional embeddings in the
+        # transformer blocks.
         pos, _ = pad_and_mask_sequences(
             pos_source, batch_source
-        )  # [n_molecules, max_seq_length, 3]
+        )  # [n_molecules, max_atom_count, 3]
 
         # Pass through transformer blocks
         for block in self.transformer_blocks:
             x = block(
                 x, attn_mask=attn_mask, pos=pos
-            )  # [n_molecules, max_seq_length, n_embd]
-        x = self.output_layer_norm(x)  # [n_molecules, max_seq_length, n_embd]
+            )  # [n_molecules, max_atom_count, n_embd]
+        x = self.output_layer_norm(x)  # [n_molecules, max_atom_count, n_embd]
 
         # During the forward pass through the trandformer layers, the zero-paddings
         # get filled with non-zero values. This should not be a problem, since these
         # are masked out in the attention mechanism, but before pooling the atom
         # embeddings into a molecule embedding, we re-apply the atom mask.
         # TODO: Investigate where this behavior comes from, maybe it influences batch statistics of the MLP and LayerNorms?
-        x = x * atom_mask.unsqueeze(-1)  # [n_molecules, max_seq_length, n_embd]
+        x = x * atom_mask.unsqueeze(-1)  # [n_molecules, max_atom_count, n_embd]
 
-        # Now we can pool the atom embeddings by summation along the max_seq_length dimension
+        # Now we can pool the atom embeddings by summation along the max_atom_count dimension
         # TODO: Investigate how attention pooling works here.
-        source_set_representation = x.sum(
-            dim=1
-        )  # Pooling of atom embeddings into molecule embedding
+        source_set_representation = x.sum(dim=1)  # [n_molecules, n_embd]
 
         # --- Atom type / Stop token prediction loss ---
 
@@ -210,28 +209,35 @@ class MolGen(LightningModule):
         # we are modelling a target type *distribution*. This distribution is the mean
         # over the one-hot encodings of the target atom types.
 
-        # (1) Map target atoms indices to contiguous indices to avoid errors in the aggregation step.
+        # (1) Map target atom indices to contiguous indices to avoid errors in the aggregation step.
         _, batch_target_contiguous = torch.unique(
             batch_target.clone(), return_inverse=True
-        )
+        )  # [n_target_atoms]
         # (2) Take the mean over the one-hot encodings of the target atom types
-        x_target_prob = one_hot(x_target.long(), 118).float()
-        x_target_prob = global_mean_pool(x_target_prob.float(), batch_target_contiguous)
+        # TODO: Using all atom types in not necessary. However, it could be interesting to differentiate atoms with different valences.
+        x_target_prob = one_hot(x_target.long(), 118).float()  # [n_target_atoms, 118]
+        x_target_prob = global_mean_pool(
+            x_target_prob.float(), batch_target_contiguous
+        )  # [n_target_sets, 118]
 
         # (3) Compute the cross-entropy loss between predicted logits and target type distributions
         logits = self.linear_output_head(
             source_set_representation
-        )  # Map embeddings to atom type logits
+        )  # [n_target_sets, 118]
         loss_ce = F.cross_entropy(
             logits[~stop_tokens],
             x_target_prob,
             ignore_index=-1,
             reduction="none",
-        )
+        )  # [n_target_sets]
         # (4) Stop tokens need to be handled separately, because here we would map to empty atom sets.
-        prob = F.softmax(logits[stop_tokens], dim=1)  # Stop token probability
-        loss_ce_stop_token = -torch.log(prob[:, 0])  # CE loss for stop tokens
-        loss_ce = torch.cat((loss_ce, loss_ce_stop_token)).mean()
+        prob = F.softmax(
+            logits[stop_tokens], dim=1
+        )  # Stop token probability [n_molecules - n_target_sets]
+        loss_ce_stop_token = -torch.log(
+            prob[:, 0]
+        )  # CE loss for stop tokens [n_molecules - n_target_sets]
+        loss_ce = torch.cat((loss_ce, loss_ce_stop_token)).mean()  # [n_molecules] -> []
 
         # --- Here comes the flow matching logic ---
         n_target_sets = (
@@ -259,7 +265,7 @@ class MolGen(LightningModule):
             1
         )  # [n_target_atoms, 3]
         # TODO: Maybe use weight tying with the other positional embedding layer?
-        positional_embedding = self.cartesian_positional_embedding_fm(
+        positional_embedding = self.fourier_embedding_layer_fm(
             interpolated_pos
         )  # [n_target_atoms, n_embd]
 
@@ -281,14 +287,13 @@ class MolGen(LightningModule):
 
         # --- Aggregate CE and FM losses over each target atom set ---
 
-        # logsumexp takes effectively the minimum atom-wise loss contribution per molecule
+        # Now we simply add the two losses together. This could be weighted in future.
         loss = loss_ce + loss_fm
-
-        # Stop tokens do not have a position, so we just add their CE loss directly
 
         return loss, loss_ce, loss_fm
 
     def configure_optimizers(self, betas=(0.9, 0.999)) -> Optimizer:
+        """Same configurations as in NanoGPT"""
         # start with all of the candidate parameters
         param_dict = {pn: p for pn, p in self.named_parameters()}
         # filter out those that do not require grad
