@@ -149,7 +149,7 @@ class MolGen(LightningModule):
         ) = self.splitter.create_source_target_split(data, device=device)
 
         # Now we compute the representation of the source atom sets with the transformer
-        source_set_representation = self.source_set_representation(
+        source_set_representation = self.compute_source_set_representation(
             x_source, pos_source, batch_source, device
         )  # [n_molecules, n_embd]
 
@@ -183,7 +183,9 @@ class MolGen(LightningModule):
 
         return loss, loss_ce, loss_fm
 
-    def source_set_representation(self, x_source, pos_source, batch_source, device):
+    def compute_source_set_representation(
+        self, x_source, pos_source, batch_source, device
+    ):
         x_source = x_source.to(device)
         pos_source = pos_source.to(device)
         batch_source = batch_source.to(device)
@@ -268,7 +270,9 @@ class MolGen(LightningModule):
         )  # [n_target_sets, 118]
 
         # (3) Incorporate the stop tokens into the target type distributions
-        combined_prob = torch.zeros((stop_tokens.shape[0], 118), dtype=torch.float, device=device)
+        combined_prob = torch.zeros(
+            (stop_tokens.shape[0], 118), dtype=torch.float, device=device
+        )
         combined_prob[stop_tokens, 0] = 1.0
         combined_prob[~stop_tokens] = x_target_prob
 
@@ -344,17 +348,32 @@ class MolGen(LightningModule):
 
     def compute_vector_field(
         self,
-        x_target,
-        pos_t,
-        time_step,
-        batch_target,
-        source_set_representation,
-        device,
+        x: Tensor,
+        pos_t: Tensor,
+        time_step: Tensor,
+        noisy_atom_to_source_set_mapping: Tensor,
+        source_set_representation: Tensor,
+        device: torch.device,
     ):
-        x_target.to(device)
+        """Method to compute the vector field of the flow matching network.
+
+        Args:
+            x (Tensor): The atom types of the noisy atoms. shape: [n_atoms, 1]
+            pos_t (Tensor): The noisy positions at time t. shape: [n_atoms, 3]
+            time_step (Tensor): The current time step. shape: [n_atoms], values in [0, 1]
+            batch_target (Tensor): Index vector indicating to which source set the noisy
+                atoms belong to. shape: [n_atoms]
+            source_set_representation (Tensor): Learned representation of the source sets.
+                shape: [n_source_sets, n_embd]
+            device (torch.device): cuda or cpu.
+
+        Returns:
+            Tensor: Vector field of shape [n_atoms, 3]
+        """
+        x.to(device)
         pos_t.to(device)
         time_step.to(device)
-        batch_target.to(device)
+        noisy_atom_to_source_set_mapping.to(device)
         source_set_representation.to(device)
 
         # (1) Embed time steps with sinusoidal embeddings
@@ -371,7 +390,7 @@ class MolGen(LightningModule):
         # (3) CFM paths are conditioned on the type of the respective target atoms,
         # so we need to include this information in the flow matching condition.
         target_atom_type_embeddings = self.atom_type_embedding(
-            x_target
+            x
         )  # [n_target_atoms, n_embd]
 
         # (4) Add embeddings up and predict the vector field
@@ -379,7 +398,9 @@ class MolGen(LightningModule):
             positional_embedding
             + time_embeddings
             + target_atom_type_embeddings
-            + source_set_representation[batch_target]  # [n_target_atoms, n_embd]
+            + source_set_representation[
+                noisy_atom_to_source_set_mapping
+            ]  # [n_target_atoms, n_embd]
         )  # [n_target_atoms, n_embd]
         output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
 
