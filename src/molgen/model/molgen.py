@@ -267,21 +267,17 @@ class MolGen(LightningModule):
             x_target_prob.float(), batch_target_contiguous
         )  # [n_target_sets, 118]
 
-        # (3) Compute the cross-entropy loss between predicted logits and target type distributions
+        # (3) Incorporate the stop tokens into the target type distributions
+        combined_prob = torch.zeros((stop_tokens.shape[0], 118), dtype=torch.float, device=device)
+        combined_prob[stop_tokens, 0] = 1.0
+        combined_prob[~stop_tokens] = x_target_prob
+
+        # (4) Compute the cross-entropy loss between predicted logits and target type distributions
         loss_ce = F.cross_entropy(
-            logits[~stop_tokens],
-            x_target_prob,
-            ignore_index=-1,
-            reduction="none",
-        )  # [n_target_sets]
-        # (4) Stop tokens need to be handled separately, because here we would map to empty atom sets.
-        prob = F.softmax(
-            logits[stop_tokens], dim=1
-        )  # Stop token probability [n_molecules - n_target_sets]
-        loss_ce_stop_token = -torch.log(
-            prob[:, 0]
-        )  # CE loss for stop tokens [n_molecules - n_target_sets]
-        loss_ce = torch.cat((loss_ce, loss_ce_stop_token)).mean()  # [n_molecules] -> []
+            logits,
+            combined_prob,
+            reduction="mean",
+        )  # [1]
 
         return loss_ce
 
