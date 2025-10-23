@@ -28,7 +28,7 @@ def training(args: argparse.Namespace) -> None:
         CONFIG_FILE_PATH = args.config_file
         print(f"Using config file: {CONFIG_FILE_PATH}")
     else:
-        CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config.yaml")
+        CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_training.yaml")
         print(f"Using default config file: {CONFIG_FILE_PATH}")
 
     # Training configs
@@ -88,7 +88,7 @@ def parseArgs() -> argparse.Namespace:
         dest="config_file",
         required=False,
         metavar="<file>",
-        help="Config file for training",
+        help="Config file for training.",
     )
 
     return parser.parse_args()
