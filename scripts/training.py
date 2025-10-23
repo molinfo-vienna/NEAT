@@ -55,6 +55,7 @@ def training(args: argparse.Namespace) -> None:
     # model = load_model_from_path(MODEL_PATH, MODEL)
     tb_logger = TensorBoardLogger(
         os.path.join(ROOT, "logs"),
+        # "/data/local/MolGen",
         name=f"{MODEL.__name__}",
         default_hp_metric=False,
     )

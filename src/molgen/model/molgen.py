@@ -148,6 +148,46 @@ class MolGen(LightningModule):
             stop_tokens,  # [n_molecules]
         ) = self.splitter.create_source_target_split(data, device=device)
 
+        # Now we compute the representation of the source atom sets with the transformer
+        source_set_representation = self.source_set_representation(
+            x_source, pos_source, batch_source, device
+        )  # [n_molecules, n_embd]
+
+        # From this representation, we can calculate a cross-entropy loss for atom type
+        # prediction, and a flow matching loss for the target atom positions.
+        # Note that these two objectives are disentangled and independent of each other.
+
+        # --- Atom type / Stop token prediction loss ---
+
+        logits = self.linear_output_head(
+            source_set_representation
+        )  # [n_target_sets, 118]
+
+        loss_ce = self.compute_atom_type_loss(
+            logits, x_target, batch_target, stop_tokens, device
+        )
+
+        loss_fm = self.compute_flow_matching_loss(
+            x_target,
+            pos_target,
+            batch_target,
+            stop_tokens,
+            source_set_representation,
+            device,
+        )
+
+        # --- Aggregate CE and FM losses over each target atom set ---
+
+        # Now we simply add the two losses together. This could be weighted in future.
+        loss = loss_ce + loss_fm
+
+        return loss, loss_ce, loss_fm
+
+    def source_set_representation(self, x_source, pos_source, batch_source, device):
+        x_source = x_source.to(device)
+        pos_source = pos_source.to(device)
+        batch_source = batch_source.to(device)
+
         # Embedding layers for atom types and positions
         atom_type_embeddings = self.atom_type_embedding(
             x_source
@@ -202,8 +242,15 @@ class MolGen(LightningModule):
         # TODO: Investigate how attention pooling works here.
         source_set_representation = x.sum(dim=1)  # [n_molecules, n_embd]
 
-        # --- Atom type / Stop token prediction loss ---
+        return source_set_representation
 
+    def compute_atom_type_loss(
+        self, logits, x_target, batch_target, stop_tokens, device
+    ):
+        logits.to(device)
+        x_target.to(device)
+        batch_target.to(device)
+        stop_tokens.to(device)
         # Atom type prediction is done with a cross-entropy loss.
         # Importantly, since we can have multiple atoms in the target set per source set,
         # we are modelling a target type *distribution*. This distribution is the mean
@@ -221,9 +268,6 @@ class MolGen(LightningModule):
         )  # [n_target_sets, 118]
 
         # (3) Compute the cross-entropy loss between predicted logits and target type distributions
-        logits = self.linear_output_head(
-            source_set_representation
-        )  # [n_target_sets, 118]
         loss_ce = F.cross_entropy(
             logits[~stop_tokens],
             x_target_prob,
@@ -239,7 +283,29 @@ class MolGen(LightningModule):
         )  # CE loss for stop tokens [n_molecules - n_target_sets]
         loss_ce = torch.cat((loss_ce, loss_ce_stop_token)).mean()  # [n_molecules] -> []
 
+        return loss_ce
+
+    def compute_flow_matching_loss(
+        self,
+        x_target,
+        pos_target,
+        batch_target,
+        stop_tokens,
+        source_set_representation,
+        device,
+    ):
+        x_target.to(device)
+        pos_target.to(device)
+        batch_target.to(device)
+        stop_tokens.to(device)
+        source_set_representation.to(device)
         # --- Here comes the flow matching logic ---
+
+        # Map target atom indices to contiguous indices to avoid errors in the aggregation step.
+        batch_size = len(source_set_representation)
+        _, batch_target_contiguous = torch.unique(
+            batch_target.clone(), return_inverse=True
+        )  # [n_target_atoms]
         n_target_sets = (
             batch_size - stop_tokens.sum()
         )  # Number of non-empty target sets
@@ -257,19 +323,56 @@ class MolGen(LightningModule):
         # Interpolation: t = 0 --> pos_random, t=1 --> target_pos
         pos_random_expanded = pos_random[batch_target_contiguous]  # [n_target_atoms, 3]
         time_step = torch.rand(n_target_atoms, device=device)  # [n_target_atoms]
-        time_embeddings = create_time_embeddings(
-            time_step, self.hparams.n_embd
-        )  # [n_target_atoms, n_embd]
         interpolation = pos_target - pos_random_expanded  # [n_target_atoms, 3]
         interpolated_pos = pos_random_expanded + interpolation * time_step.unsqueeze(
             1
         )  # [n_target_atoms, 3]
-        # TODO: Maybe use weight tying with the other positional embedding layer?
-        positional_embedding = self.fourier_embedding_layer_fm(
-            interpolated_pos
+
+        # (3) Now we can compute the vector field output of the flow network at the
+        # interpolated positions and time steps.
+        output_fm = self.compute_vector_field(
+            x_target,
+            interpolated_pos,
+            time_step,
+            batch_target,
+            source_set_representation,
+            device,
+        )  # [n_target_atoms, 3]
+
+        # (4) The flow matching loss is the MSE between the predicted vector field and
+        # the interpolation (pos_1 - pos_0).
+        # TODO: Maybe we should aggregate this over source atom sets, and not atoms? But weighting each path individually is also a valid strategy
+        loss_fm = torch.mean((output_fm - interpolation) ** 2)
+
+        return loss_fm
+
+    def compute_vector_field(
+        self,
+        x_target,
+        pos_t,
+        time_step,
+        batch_target,
+        source_set_representation,
+        device,
+    ):
+        x_target.to(device)
+        pos_t.to(device)
+        time_step.to(device)
+        batch_target.to(device)
+        source_set_representation.to(device)
+
+        # (1) Embed time steps with sinusoidal embeddings
+        time_embeddings = create_time_embeddings(
+            time_step, self.hparams.n_embd
         )  # [n_target_atoms, n_embd]
 
-        # (3) Each CFM paths are conditioned on the type of the respective target atoms,
+        # (2) Embed the given positions at time t with Fourier features
+        # TODO: Maybe use weight tying with the other positional embedding layer?
+        positional_embedding = self.fourier_embedding_layer_fm(
+            pos_t
+        )  # [n_target_atoms, n_embd]
+
+        # (3) CFM paths are conditioned on the type of the respective target atoms,
         # so we need to include this information in the flow matching condition.
         target_atom_type_embeddings = self.atom_type_embedding(
             x_target
@@ -283,14 +386,8 @@ class MolGen(LightningModule):
             + source_set_representation[batch_target]  # [n_target_atoms, n_embd]
         )  # [n_target_atoms, n_embd]
         output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
-        loss_fm = torch.mean((output_fm - interpolation) ** 2)
 
-        # --- Aggregate CE and FM losses over each target atom set ---
-
-        # Now we simply add the two losses together. This could be weighted in future.
-        loss = loss_ce + loss_fm
-
-        return loss, loss_ce, loss_fm
+        return output_fm
 
     def configure_optimizers(self, betas=(0.9, 0.999)) -> Optimizer:
         """Same configurations as in NanoGPT"""
