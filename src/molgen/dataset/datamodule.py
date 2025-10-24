@@ -39,15 +39,14 @@ class DataModule(LightningDataModule):
                 print(f"Number of training graphs: {len(self.training_data)}")
                 print(f"Number of validation graphs: {len(self.validation_data)}")
                 print(f"Number of test graphs: {len(self.test_data)}")
-                
+
             elif self.split == "edm_split":
-                splits = self.full_data.get_qm9_splits(
-                    self.training_data_dir, edm_splits=True
-                )
+                splits = self.full_data.get_qm9_splits(edm_splits=True)
                 print("Using predefined EDM splits.")
                 self.training_data = self.full_data[splits["train"]]
                 self.validation_data = self.full_data[splits["val"]]
                 self.test_data = self.full_data[splits["test"]]
+
                 print(f"Number of training graphs: {len(self.training_data)}")
                 print(f"Number of validation graphs: {len(self.validation_data)}")
                 print(f"Number of test graphs: {len(self.test_data)}")

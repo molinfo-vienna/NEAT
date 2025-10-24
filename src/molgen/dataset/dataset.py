@@ -12,11 +12,13 @@ import numpy as np
 
 from tqdm import tqdm
 from rdkit import Chem
+from rdkit.Chem.rdchem import HybridizationType
 import networkx as nx
-
+from rdkit import RDLogger
 import torch
 from torch_geometric.data import InMemoryDataset, Data
-from torch_geometric.transforms import ToUndirected
+
+RDLogger.DisableLog("rdApp.*")  # Disables all RDKit warnings and informational messages
 
 
 class DataSet(InMemoryDataset):
@@ -105,11 +107,14 @@ class DataSet(InMemoryDataset):
     def process(self):
         raw_path = self.raw_paths[0]
         data_list = []
+        not_sanitized = []
         supplier = Chem.SDMolSupplier(raw_path, removeHs=False, sanitize=False)
-        for molecule in tqdm(supplier):
-            data = self.process_molecule(molecule)
+        for idx, molecule in tqdm(enumerate(supplier)):
+            data, sanitized = self.process_molecule(molecule)
             if data is not None:
                 data_list.append(data)
+                if not sanitized:
+                    not_sanitized.append(idx)
 
         data_list = [data for data in data_list if data is not None]
 
@@ -120,6 +125,27 @@ class DataSet(InMemoryDataset):
             data_list = [self.pre_transform(data) for data in data_list]
 
         self.save(data_list, self.processed_paths[0])
+        not_sanitized = torch.tensor(not_sanitized, dtype=torch.long)
+        torch.save(
+            not_sanitized,
+            os.path.join(self.root, "processed", "_not_sanitized_idx.pt"),
+        )
+
+    @staticmethod
+    def try_sanitize_molecule(mol):
+        try:
+            # Attempt to sanitize the molecule
+            Chem.SanitizeMol(mol)
+            return (
+                mol,
+                True,
+            )  # Return the molecule and a flag indicating successful sanitization
+        except Exception as e:
+            # If sanitization fails, flag it and continue
+            return (
+                mol,
+                False,
+            )  # Return the molecule and a flag indicating sanitization failure
 
     @staticmethod
     def process_molecule(mol):
@@ -127,10 +153,30 @@ class DataSet(InMemoryDataset):
             # Some molecules contain multiple fragements, here we pic the largest one
             frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
             mol = max(frags, key=lambda frag: frag.GetNumAtoms())
+            # mol = Chem.AddHs(mol)
+            mol, sanitized = DataSet.try_sanitize_molecule(mol)
 
-            # Node features: Atomic numbers
+            # Define a mapping for hybridization states to integers
+            hybridization_mapping = {
+                HybridizationType.S: 0,
+                HybridizationType.SP: 1,
+                HybridizationType.SP2: 2,
+                HybridizationType.SP3: 3,
+                HybridizationType.SP3D: 4,
+                HybridizationType.SP3D2: 5,
+                HybridizationType.UNSPECIFIED: -1,  # Optional: handle unspecified hybridization
+            }
+
+            # Create a tensor for atomic numbers and hybridization states
             x = torch.tensor(
-                [atom.GetAtomicNum() for atom in mol.GetAtoms()], dtype=torch.int32
+                [
+                    [
+                        atom.GetAtomicNum(),
+                        hybridization_mapping[atom.GetHybridization()],
+                    ]
+                    for atom in mol.GetAtoms()
+                ],
+                dtype=torch.long,
             )
 
             # Node positions: 3D coordinates
@@ -205,7 +251,7 @@ class DataSet(InMemoryDataset):
                 diameter=diameter,
             )
 
-            return data
+            return data, sanitized
 
         except Exception as e:
             print(f"Error processing {mol}: {e}")
@@ -213,7 +259,6 @@ class DataSet(InMemoryDataset):
 
     def get_qm9_splits(
         self,
-        root_dir: str,
         edm_splits: bool,
     ) -> Dict[str, np.ndarray]:
         """Adapted from https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/main/qm9/data/prepare/qm9.py."""
@@ -229,7 +274,7 @@ class DataSet(InMemoryDataset):
         gdb9_url_excluded = (
             "https://springernature.figshare.com/ndownloader/files/3195404"
         )
-        gdb9_txt_excluded = os.path.join(root_dir, "uncharacterized.txt")
+        gdb9_txt_excluded = os.path.join(self.root, "uncharacterized.txt")
         urllib.request.urlretrieve(gdb9_url_excluded, filename=gdb9_txt_excluded)
 
         # First, get list of excluded indices.
@@ -284,6 +329,14 @@ class DataSet(InMemoryDataset):
         train = included_idxs[train]
         val = included_idxs[val]
         test = included_idxs[test]
+
+        # Load sanitized indices and exclude them from splits
+        not_sanitized = torch.load(
+            os.path.join(self.root, "processed", "_not_sanitized_idx.pt")
+        ).numpy()
+        train = np.array([idx for idx in train if idx not in not_sanitized])
+        val = np.array([idx for idx in val if idx not in not_sanitized])
+        test = np.array([idx for idx in test if idx not in not_sanitized])
 
         splits = {"train": train, "val": val, "test": test}
 

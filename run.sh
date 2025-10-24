@@ -1,9 +1,9 @@
 #!/bin/bash
 
-#SBATCH --job-name=run05     # Job name
-#SBATCH --output=/data/cluster/logs_DR/run05.out
-#SBATCH --error=/data/cluster/logs_DR/run05.err
-#SBATCH --nodelist=node05
+#SBATCH --job-name=run04     # Job name
+#SBATCH --output=/data/cluster/logs_DR/run04.out
+#SBATCH --error=/data/cluster/logs_DR/run04.err
+#SBATCH --nodelist=node04
 #SBATCH --exclude=node[17-24]
 #SBATCH --partition=long
 #SBATCH --nodes=1
@@ -15,4 +15,4 @@
 
 source /data/sharedXL/software/conda/daniel_rose/mambaforge/etc/profile.d/conda.sh
 conda activate molgen
-srun python /data/sharedXL/projects/Daniel/MolGen/scripts/training.py --config /data/sharedXL/projects/Daniel/MolGen/scripts/config.yaml
+srun python /data/sharedXL/projects/Daniel/MolGen/scripts/training.py --config /data/sharedXL/projects/Daniel/MolGen/scripts/config_training.yaml
