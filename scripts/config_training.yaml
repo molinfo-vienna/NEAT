@@ -3,6 +3,8 @@ vocab_size: 16
 n_layer: 12
 n_head: 12
 n_embd: 720
+n_embd_fm: 720
+n_layers_fm: 2
 dropout: 0.2
 bias: True
 data_set: QM9
