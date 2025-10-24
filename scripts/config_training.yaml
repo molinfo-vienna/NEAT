@@ -1,8 +1,8 @@
-block_size: 1024
-vocab_size: 118
+block_size: 512
+vocab_size: 16
 n_layer: 12
 n_head: 12
-n_embd: 1080
+n_embd: 720
 dropout: 0.2
 bias: True
 data_set: QM9

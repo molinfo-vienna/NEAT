@@ -9,6 +9,7 @@ import zipfile
 import urllib
 from typing import Dict
 import numpy as np
+import yaml
 
 from tqdm import tqdm
 from rdkit import Chem
@@ -106,6 +107,14 @@ class DataSet(InMemoryDataset):
 
     def process(self):
         raw_path = self.raw_paths[0]
+        vocab_path = os.path.join(
+            os.path.dirname(os.path.dirname(self.root)), "scripts", "qm9_vocab.yaml"
+        )
+        try:
+            with open(vocab_path, "r") as file:
+                self.vocabulary = yaml.safe_load(file)
+        except yaml.YAMLError as e:
+            print(f"Error loading YAML file: {e}")
         data_list = []
         not_sanitized = []
         supplier = Chem.SDMolSupplier(raw_path, removeHs=False, sanitize=False)
@@ -147,8 +156,7 @@ class DataSet(InMemoryDataset):
                 False,
             )  # Return the molecule and a flag indicating sanitization failure
 
-    @staticmethod
-    def process_molecule(mol):
+    def process_molecule(self, mol):
         try:
             # Some molecules contain multiple fragements, here we pic the largest one
             frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
@@ -170,9 +178,8 @@ class DataSet(InMemoryDataset):
             # Create a tensor for atomic numbers and hybridization states
             x = torch.tensor(
                 [
-                    [
-                        atom.GetAtomicNum(),
-                        hybridization_mapping[atom.GetHybridization()],
+                    self.vocabulary[
+                        f"({atom.GetAtomicNum()}, {hybridization_mapping[atom.GetHybridization()]})"
                     ]
                     for atom in mol.GetAtoms()
                 ],

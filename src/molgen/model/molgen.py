@@ -161,7 +161,7 @@ class MolGen(LightningModule):
 
         logits = self.linear_output_head(
             source_set_representation
-        )  # [n_target_sets, 118]
+        )  # [n_target_sets, vocab_size]
 
         loss_ce = self.compute_atom_type_loss(
             logits, x_target, batch_target, stop_tokens, device
@@ -264,14 +264,18 @@ class MolGen(LightningModule):
         )  # [n_target_atoms]
         # (2) Take the mean over the one-hot encodings of the target atom types
         # TODO: Using all atom types in not necessary. However, it could be interesting to differentiate atoms with different valences.
-        x_target_prob = one_hot(x_target.long(), 118).float()  # [n_target_atoms, 118]
+        x_target_prob = one_hot(
+            x_target.long(), self.hparams.vocab_size
+        ).float()  # [n_target_atoms, vocab_size]
         x_target_prob = global_mean_pool(
             x_target_prob.float(), batch_target_contiguous
-        )  # [n_target_sets, 118]
+        )  # [n_target_sets, vocab_size]
 
         # (3) Incorporate the stop tokens into the target type distributions
         combined_prob = torch.zeros(
-            (stop_tokens.shape[0], 118), dtype=torch.float, device=device
+            (stop_tokens.shape[0], self.hparams.vocab_size),
+            dtype=torch.float,
+            device=device,
         )
         combined_prob[stop_tokens, 0] = 1.0
         combined_prob[~stop_tokens] = x_target_prob
