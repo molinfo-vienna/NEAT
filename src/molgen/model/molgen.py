@@ -82,6 +82,7 @@ class MolGen(LightningModule):
 
         # A simple MLP with layer norm used for the flow network
         channel_list = [self.hparams.n_embd_fm for _ in range(self.hparams.n_layers_fm)]
+        channel_list[0] = self.hparams.n_embd  # input is n_embd
         channel_list.append(3)  # output is 3D vector
         self.flow_matching_mlp = MLP(
             channel_list=channel_list,
