@@ -13,6 +13,9 @@ from molgen.model import MolGen
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
+# Set device for model
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 # settings for deterministic generation
 torch.set_float32_matmul_precision("medium")
 torch_geometric.seed_everything(42)
@@ -48,16 +51,18 @@ def generate(args: argparse.Namespace) -> None:
     print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
 
     # Load model
-    model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH)
+    model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
 
-    # Generate molecules
-    x, pos, batch_source = model.generate(
-        batch_size=params["num_molecules"],
-        max_atoms=params["max_atoms"],
-        temperature=params["temperature"],
-        top_k=params["top_k"],
-        num_time_steps=params["num_time_steps"],
-    )
+    with torch.no_grad():
+        model.eval()
+        # Generate molecules
+        x, pos, batch_source = model.generate(
+            batch_size=params["num_molecules"],
+            max_atoms=params["max_atoms"],
+            temperature=params["temperature"],
+            top_k=params["top_k"],
+            num_time_steps=params["num_time_steps"],
+        )
     
     # Save molecules to output file
     if not os.path.exists(params["output_path"]):

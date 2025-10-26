@@ -64,6 +64,7 @@ def training(args: argparse.Namespace) -> None:
         ModelCheckpoint(
             monitor="val/val_loss",
             mode="min",
+            every_n_epochs=10,
         ),
     ]
     trainer = Trainer(

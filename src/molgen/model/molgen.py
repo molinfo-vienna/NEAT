@@ -1,5 +1,6 @@
 from typing import Union
 import math
+import types
 
 import torch
 from torch import Tensor
@@ -19,6 +20,8 @@ from .augmentation import RandomRotationAugmentation
 from .utils import pad_and_mask_sequences, create_time_embeddings
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
 from .splitting import SourceTargetSplitter
+from .attention import AttentionPooling
+from .simple_mlp import SimpleMLPAdaLN
 
 
 class MolGen(LightningModule):
@@ -26,7 +29,9 @@ class MolGen(LightningModule):
         super(MolGen, self).__init__()
         self.save_hyperparameters()
         # This will be handy when we introduce more hyper parameters
-        # self.hparams.setdefault("key", "value")
+        self.hparams.setdefault("pooling", "add")
+        self.hparams.setdefault("fm_conditioning", "add")
+        self.hparams.setdefault("time_step_sampling", "uniform")
 
         # Atom type embedding layer
         self.atom_type_embedding = torch.nn.Embedding(
@@ -64,6 +69,15 @@ class MolGen(LightningModule):
             self.hparams.n_embd, self.hparams.vocab_size, bias=False
         )
 
+        # Attention pooling layer if specified
+        if self.hparams.pooling == "attention":
+            self.attention_pooling = AttentionPooling(
+                n_embd=self.hparams.n_embd,
+                n_head=self.hparams.n_head,
+                dropout=self.hparams.dropout,
+                bias=self.hparams.bias,
+            )
+
         # The atom types are supervised with a cross-entropy loss
         self.bce_loss = torch.nn.BCEWithLogitsLoss()
 
@@ -80,12 +94,25 @@ class MolGen(LightningModule):
             out_dim=self.hparams.n_embd
         )
 
-        # A simple MLP with layer norm used for the flow network
-        self.flow_matching_mlp = MLP(
-            channel_list=[self.hparams.n_embd, self.hparams.n_embd, 3],
-            dropout=self.hparams.dropout,
-            bias=self.hparams.bias,
-        )
+        if self.hparams.fm_conditioning != "ada":
+            # A simple MLP with layer norm used for the flow network
+            channel_list = [
+                self.hparams.n_embd_fm for _ in range(self.hparams.n_layers_fm)
+            ]
+            if self.hparams.fm_conditioning == "add":
+                channel_list[0] = self.hparams.n_embd  # input is n_embd
+            elif self.hparams.fm_conditioning == "concat":
+                channel_list[0] = 2 * self.hparams.n_embd  # input is 2*n_embd
+            else:
+                raise ValueError(
+                    f"Unknown fm_conditioning method: {self.hparams.fm_conditioning}"
+                )
+            channel_list.append(3)  # output is 3D vector
+            self.flow_matching_mlp = MLP(
+                channel_list=channel_list,
+                dropout=self.hparams.dropout,
+                bias=self.hparams.bias,
+            )
 
         # init all weights, this is again from the GPT-2 code
         self.apply(self._init_weights)
@@ -96,12 +123,26 @@ class MolGen(LightningModule):
                     p, mean=0.0, std=0.02 / math.sqrt(2 * self.hparams.n_layer)
                 )
 
-        # report number of parameters
-        print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
+        # This is the Diffusion MLP with AdaLN conditioning.
+        # It was used in the original diffusion loss paper, and quetzal also uses it.
+        if self.hparams.fm_conditioning == "ada":
+            config = types.SimpleNamespace(
+                diff_w=self.hparams.n_embd_fm,  # model hidden width
+                n_embd=self.hparams.n_embd,  # dimension of conditioning vector c
+                diff_fourier=512,  # number of Fourier channels for coord embedding
+                coord_bandwidth=20.0,  # frequency bandwidth for Fourier features
+                diff_d=self.hparams.n_layers_fm,  # number of residual blocks
+                diff_mlp="mlp",  # use MLP feedforward
+                diff_mlp_expand=1,  # expansion factor for MLP
+            )
+            self.ada_mlp = SimpleMLPAdaLN(config)
 
         self.splitter = SourceTargetSplitter(splitting_mode="cyclic")
         self.rotation_augmentation = RandomRotationAugmentation()
         self.target_set_max_size = -1
+
+        # report number of parameters
+        print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
     def get_num_params(self):
         """
@@ -161,7 +202,7 @@ class MolGen(LightningModule):
 
         logits = self.linear_output_head(
             source_set_representation
-        )  # [n_target_sets, 118]
+        )  # [n_target_sets, vocab_size]
 
         loss_ce = self.compute_atom_type_loss(
             logits, x_target, batch_target, stop_tokens, device
@@ -212,12 +253,6 @@ class MolGen(LightningModule):
 
         # The attention mask corresponds to the atom mask, but needs to be broadcasted
         # to the number of attention heads.
-        attn_mask = atom_mask.unsqueeze(1).unsqueeze(
-            2
-        )  # [n_molecules, 1, 1, max_atom_count]
-        attn_mask = attn_mask.expand(
-            -1, self.hparams.n_head, -1, -1
-        )  # [n_molecules, n_head, 1, max_atom_count]
 
         # The positions need to be padded in the same way as the atom embeddings.
         # This will be needed for applying the rotary positional embeddings in the
@@ -229,7 +264,7 @@ class MolGen(LightningModule):
         # Pass through transformer blocks
         for block in self.transformer_blocks:
             x = block(
-                x, attn_mask=attn_mask, pos=pos
+                x, attn_mask=atom_mask, pos=pos
             )  # [n_molecules, max_atom_count, n_embd]
         x = self.output_layer_norm(x)  # [n_molecules, max_atom_count, n_embd]
 
@@ -242,8 +277,13 @@ class MolGen(LightningModule):
 
         # Now we can pool the atom embeddings by summation along the max_atom_count dimension
         # TODO: Investigate how attention pooling works here.
-        source_set_representation = x.sum(dim=1)  # [n_molecules, n_embd]
 
+        if self.hparams.pooling == "add":
+            source_set_representation = x.sum(dim=1)  # [n_molecules, n_embd]
+        elif self.hparams.pooling == "attention":
+            source_set_representation = self.attention_pooling(x)
+        else:
+            raise ValueError(f"Unknown pooling method: {self.hparams.pooling}")
         return source_set_representation
 
     def compute_atom_type_loss(
@@ -264,14 +304,18 @@ class MolGen(LightningModule):
         )  # [n_target_atoms]
         # (2) Take the mean over the one-hot encodings of the target atom types
         # TODO: Using all atom types in not necessary. However, it could be interesting to differentiate atoms with different valences.
-        x_target_prob = one_hot(x_target.long(), 118).float()  # [n_target_atoms, 118]
+        x_target_prob = one_hot(
+            x_target.long(), self.hparams.vocab_size
+        ).float()  # [n_target_atoms, vocab_size]
         x_target_prob = global_mean_pool(
             x_target_prob.float(), batch_target_contiguous
-        )  # [n_target_sets, 118]
+        )  # [n_target_sets, vocab_size]
 
         # (3) Incorporate the stop tokens into the target type distributions
         combined_prob = torch.zeros(
-            (stop_tokens.shape[0], 118), dtype=torch.float, device=device
+            (stop_tokens.shape[0], self.hparams.vocab_size),
+            dtype=torch.float,
+            device=device,
         )
         combined_prob[stop_tokens, 0] = 1.0
         combined_prob[~stop_tokens] = x_target_prob
@@ -322,7 +366,14 @@ class MolGen(LightningModule):
         # between the random and target position.
         # Interpolation: t = 0 --> pos_random, t=1 --> target_pos
         pos_random_expanded = pos_random[batch_target_contiguous]  # [n_target_atoms, 3]
-        time_step = torch.rand(n_target_atoms, device=device)  # [n_target_atoms]
+        if self.hparams.time_step_sampling == "uniform":
+            time_step = self.sample_timesteps_uniform(
+                n_target_atoms, device=device
+            )  # [n_target_atoms]
+        elif self.hparams.time_step_sampling == "logit_normal":
+            time_step = 0.98 * self.sample_timesteps_logit_normal(
+                n_target_atoms, device=device, m=0.8, s=1.7
+            ) + 0.02 * self.sample_timesteps_uniform(n_target_atoms, device=device)
         interpolation = pos_target - pos_random_expanded  # [n_target_atoms, 3]
         interpolated_pos = pos_random_expanded + interpolation * time_step.unsqueeze(
             1
@@ -345,6 +396,18 @@ class MolGen(LightningModule):
         loss_fm = torch.mean((output_fm - interpolation) ** 2)
 
         return loss_fm
+
+    def sample_timesteps_uniform(self, num_samples, device):
+        """
+        Sample timesteps from a uniform distribution.
+        """
+        return torch.rand(num_samples, device=device)
+
+    def sample_timesteps_logit_normal(self, num_samples, device, m=0.8, s=1.7):
+        # Logit-Normal Sampling from https://arxiv.org/pdf/2403.03206.pdf
+        u = torch.randn(num_samples, device=device) * s + m
+        t = 1 / (1 + torch.exp(-u))
+        return t
 
     def compute_vector_field(
         self,
@@ -393,16 +456,39 @@ class MolGen(LightningModule):
             x
         )  # [n_target_atoms, n_embd]
 
-        # (4) Add embeddings up and predict the vector field
-        x = (
-            positional_embedding
-            + time_embeddings
-            + target_atom_type_embeddings
-            + source_set_representation[
-                noisy_atom_to_source_set_mapping
-            ]  # [n_target_atoms, n_embd]
-        )  # [n_target_atoms, n_embd]
-        output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
+        if self.hparams.fm_conditioning == "add":
+            # (4) Add embeddings up and predict the vector field
+            x = (
+                positional_embedding
+                + time_embeddings
+                + target_atom_type_embeddings
+                + source_set_representation[noisy_atom_to_source_set_mapping]
+            )  # [n_target_atoms, n_embd]
+            output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
+
+        elif self.hparams.fm_conditioning == "concat":
+            x = positional_embedding + time_embeddings
+            condition = (
+                target_atom_type_embeddings
+                + source_set_representation[noisy_atom_to_source_set_mapping]
+            )  # [n_target_atoms, n_embd]
+            x = torch.cat([x, condition], dim=-1)  # [n_target_atoms, 2*n_embd]
+            output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
+
+        elif self.hparams.fm_conditioning == "ada":
+            x = positional_embedding + time_embeddings
+            condition = (
+                target_atom_type_embeddings
+                + source_set_representation[noisy_atom_to_source_set_mapping]
+            )  # [n_target_atoms, n_embd]
+            output_fm = self.ada_mlp(
+                pos_t, time_step, condition
+            )  # [n_target_atoms, 2*n_embd]
+
+        else:
+            raise ValueError(
+                f"Unknown fm_conditioning method: {self.hparams.fm_conditioning}"
+            )
 
         return output_fm
 
@@ -439,7 +525,16 @@ class MolGen(LightningModule):
             fused=True,
         )
 
-        return optimizer
+        # Define the warmup scheduler
+        def lr_lambda(epoch):
+            if epoch < 10:  # Warmup for the first 10 epochs
+                return epoch / 10  # Linearly increase LR
+            else:
+                return 1.0  # Keep LR constant after warmup
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
+
+        return [optimizer], [scheduler]
 
     def shared_step(self, batch: Data, batch_idx: int) -> Tensor:
         loss, loss_ce, loss_fm = self(batch)
@@ -519,7 +614,6 @@ class MolGen(LightningModule):
     ) -> Union[Tensor, tuple[Tensor, Tensor]]:
         return self(batch)
 
-
     @torch.no_grad()
     def generate(
         self,
@@ -550,37 +644,58 @@ class MolGen(LightningModule):
             masked_batch_source = batch_source[expanded_mask]
             _, batch_source_remapped = torch.unique(
                 masked_batch_source.clone(), return_inverse=True
-            ) 
-            source_set_representation = self.compute_source_set_representation(masked_x, masked_pos, batch_source_remapped, device) # [active_mol_count, n_embd]
+            )
+            source_set_representation = self.compute_source_set_representation(
+                masked_x, masked_pos, batch_source_remapped, device
+            )  # [active_mol_count, n_embd]
             # Compute logits
-            logits = self.linear_output_head(source_set_representation) # [active_mol_count, vocab_size]
+            logits = self.linear_output_head(
+                source_set_representation
+            )  # [active_mol_count, vocab_size]
             # Optionally crop the logits to only the top k options
             if top_k is not None:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float('Inf')
+                logits[logits < v[:, [-1]]] = -float("Inf")
             # Compute probabilities
-            probabilities = F.softmax(logits / temperature, dim=-1) # [active_mol_count, vocab_size]
+            probabilities = F.softmax(
+                logits / temperature, dim=-1
+            )  # [active_mol_count, vocab_size]
             # Sample next atom types from the resulting distribution
-            x_next = torch.multinomial(probabilities, num_samples=1).flatten() # [active_mol_count]
+            x_next = torch.multinomial(
+                probabilities, num_samples=1
+            ).flatten()  # [active_mol_count]
             # Create a mask on the active molecules given the newly predicted atom types
-            x_next_mask = x_next == 0 # [active_mol_count]
+            x_next_mask = x_next == 0  # [active_mol_count]
             # Update the stop token mask with the newly predicted stop tokens
-            stop_token_mask[active_mol_idx] += x_next_mask # [batch_size]
+            stop_token_mask[active_mol_idx] += x_next_mask  # [batch_size]
             # Count the number of stop tokens and break if all molecules have a stop token
             # also update the active molecule indices and count
             n_stop_tokens = stop_token_mask.sum()
-            active_mol_idx = torch.arange(batch_size, device=device)[~stop_token_mask] # [active_mol_count] carefull, this might be shorter than before, if stop tokens were predicted!
+            active_mol_idx = torch.arange(batch_size, device=device)[
+                ~stop_token_mask
+            ]  # [active_mol_count] carefull, this might be shorter than before, if stop tokens were predicted!
             active_mol_count = len(active_mol_idx)
             if n_stop_tokens == batch_size:
                 break
             # Initialize next atoms' position with a random position
             pos_next = torch.randn(active_mol_count, 3, device=device)
             # Create a batch target tensor for the molecules that are still active
-            batch_target = torch.arange(active_mol_count, device=device) 
+            batch_target = torch.arange(active_mol_count, device=device)
             # Find position of the atoms via flow matching
             for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
                 time_step = time_step.expand(active_mol_count)
-                delta_pos = 1 / num_time_steps * self.compute_vector_field(x_next[~x_next_mask], pos_next, time_step, batch_target, source_set_representation[~x_next_mask], device=device)
+                delta_pos = (
+                    1
+                    / num_time_steps
+                    * self.compute_vector_field(
+                        x_next[~x_next_mask],
+                        pos_next,
+                        time_step,
+                        batch_target,
+                        source_set_representation[~x_next_mask],
+                        device=device,
+                    )
+                )
                 pos_next = pos_next + delta_pos
 
             x_next = x_next[~x_next_mask]
@@ -591,16 +706,33 @@ class MolGen(LightningModule):
             for idx in range(batch_size):
                 if idx in active_mol_idx:
                     active_idx = torch.where(active_mol_idx == idx)[0]
-                    updated_x.append(torch.cat((x[batch_source == idx], x_next[active_idx].view(1)), dim=0)) # [num_atoms+1]
-                    updated_pos.append(torch.cat((pos[batch_source == idx], pos_next[active_idx].view(1, 3)), dim=0)) # [num_atoms+1, 3]
-                    updated_batch.append(torch.cat((batch_source[batch_source == idx], torch.tensor(idx, device=device).view(1)), dim=0)) # [num_atoms+1]
+                    updated_x.append(
+                        torch.cat(
+                            (x[batch_source == idx], x_next[active_idx].view(1)), dim=0
+                        )
+                    )  # [num_atoms+1]
+                    updated_pos.append(
+                        torch.cat(
+                            (pos[batch_source == idx], pos_next[active_idx].view(1, 3)),
+                            dim=0,
+                        )
+                    )  # [num_atoms+1, 3]
+                    updated_batch.append(
+                        torch.cat(
+                            (
+                                batch_source[batch_source == idx],
+                                torch.tensor(idx, device=device).view(1),
+                            ),
+                            dim=0,
+                        )
+                    )  # [num_atoms+1]
                 else:
                     updated_x.append(x[batch_source == idx])
                     updated_pos.append(pos[batch_source == idx])
                     updated_batch.append(batch_source[batch_source == idx])
 
-            x = torch.cat(updated_x, dim=0) # [batch_size]
-            pos = torch.cat(updated_pos, dim=0) # [batch_size, 3]
-            batch_source = torch.cat(updated_batch, dim=0) # [batch_size]
+            x = torch.cat(updated_x, dim=0)  # [batch_size]
+            pos = torch.cat(updated_pos, dim=0)  # [batch_size, 3]
+            batch_source = torch.cat(updated_batch, dim=0)  # [batch_size]
 
         return x, pos, batch_source
