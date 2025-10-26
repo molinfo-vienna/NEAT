@@ -1,5 +1,6 @@
 from typing import Union
 import math
+import types
 
 import torch
 from torch import Tensor
@@ -19,6 +20,8 @@ from .augmentation import RandomRotationAugmentation
 from .utils import pad_and_mask_sequences, create_time_embeddings
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
 from .splitting import SourceTargetSplitter
+from .attention import AttentionPooling
+from .simple_mlp import SimpleMLPAdaLN
 
 
 class MolGen(LightningModule):
@@ -26,7 +29,9 @@ class MolGen(LightningModule):
         super(MolGen, self).__init__()
         self.save_hyperparameters()
         # This will be handy when we introduce more hyper parameters
-        # self.hparams.setdefault("key", "value")
+        self.hparams.setdefault("pooling", "add")
+        self.hparams.setdefault("fm_conditioning", "add")
+        self.hparams.setdefault("time_step_sampling", "uniform")
 
         # Atom type embedding layer
         self.atom_type_embedding = torch.nn.Embedding(
@@ -64,6 +69,15 @@ class MolGen(LightningModule):
             self.hparams.n_embd, self.hparams.vocab_size, bias=False
         )
 
+        # Attention pooling layer if specified
+        if self.hparams.pooling == "attention":
+            self.attention_pooling = AttentionPooling(
+                n_embd=self.hparams.n_embd,
+                n_head=self.hparams.n_head,
+                dropout=self.hparams.dropout,
+                bias=self.hparams.bias,
+            )
+
         # The atom types are supervised with a cross-entropy loss
         self.bce_loss = torch.nn.BCEWithLogitsLoss()
 
@@ -80,15 +94,25 @@ class MolGen(LightningModule):
             out_dim=self.hparams.n_embd
         )
 
-        # A simple MLP with layer norm used for the flow network
-        channel_list = [self.hparams.n_embd_fm for _ in range(self.hparams.n_layers_fm)]
-        channel_list[0] = self.hparams.n_embd  # input is n_embd
-        channel_list.append(3)  # output is 3D vector
-        self.flow_matching_mlp = MLP(
-            channel_list=channel_list,
-            dropout=self.hparams.dropout,
-            bias=self.hparams.bias,
-        )
+        if self.hparams.fm_conditioning != "ada":
+            # A simple MLP with layer norm used for the flow network
+            channel_list = [
+                self.hparams.n_embd_fm for _ in range(self.hparams.n_layers_fm)
+            ]
+            if self.hparams.fm_conditioning == "add":
+                channel_list[0] = self.hparams.n_embd  # input is n_embd
+            elif self.hparams.fm_conditioning == "concat":
+                channel_list[0] = 2 * self.hparams.n_embd  # input is 2*n_embd
+            else:
+                raise ValueError(
+                    f"Unknown fm_conditioning method: {self.hparams.fm_conditioning}"
+                )
+            channel_list.append(3)  # output is 3D vector
+            self.flow_matching_mlp = MLP(
+                channel_list=channel_list,
+                dropout=self.hparams.dropout,
+                bias=self.hparams.bias,
+            )
 
         # init all weights, this is again from the GPT-2 code
         self.apply(self._init_weights)
@@ -99,12 +123,26 @@ class MolGen(LightningModule):
                     p, mean=0.0, std=0.02 / math.sqrt(2 * self.hparams.n_layer)
                 )
 
-        # report number of parameters
-        print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
+        # This is the Diffusion MLP with AdaLN conditioning.
+        # It was used in the original diffusion loss paper, and quetzal also uses it.
+        if self.hparams.fm_conditioning == "ada":
+            config = types.SimpleNamespace(
+                diff_w=self.hparams.n_embd_fm,  # model hidden width
+                n_embd=self.hparams.n_embd,  # dimension of conditioning vector c
+                diff_fourier=512,  # number of Fourier channels for coord embedding
+                coord_bandwidth=20.0,  # frequency bandwidth for Fourier features
+                diff_d=self.hparams.n_layers_fm,  # number of residual blocks
+                diff_mlp="mlp",  # use MLP feedforward
+                diff_mlp_expand=1,  # expansion factor for MLP
+            )
+            self.ada_mlp = SimpleMLPAdaLN(config)
 
         self.splitter = SourceTargetSplitter(splitting_mode="cyclic")
         self.rotation_augmentation = RandomRotationAugmentation()
         self.target_set_max_size = -1
+
+        # report number of parameters
+        print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
     def get_num_params(self):
         """
@@ -215,12 +253,6 @@ class MolGen(LightningModule):
 
         # The attention mask corresponds to the atom mask, but needs to be broadcasted
         # to the number of attention heads.
-        attn_mask = atom_mask.unsqueeze(1).unsqueeze(
-            2
-        )  # [n_molecules, 1, 1, max_atom_count]
-        attn_mask = attn_mask.expand(
-            -1, self.hparams.n_head, -1, -1
-        )  # [n_molecules, n_head, 1, max_atom_count]
 
         # The positions need to be padded in the same way as the atom embeddings.
         # This will be needed for applying the rotary positional embeddings in the
@@ -232,7 +264,7 @@ class MolGen(LightningModule):
         # Pass through transformer blocks
         for block in self.transformer_blocks:
             x = block(
-                x, attn_mask=attn_mask, pos=pos
+                x, attn_mask=atom_mask, pos=pos
             )  # [n_molecules, max_atom_count, n_embd]
         x = self.output_layer_norm(x)  # [n_molecules, max_atom_count, n_embd]
 
@@ -245,8 +277,13 @@ class MolGen(LightningModule):
 
         # Now we can pool the atom embeddings by summation along the max_atom_count dimension
         # TODO: Investigate how attention pooling works here.
-        source_set_representation = x.sum(dim=1)  # [n_molecules, n_embd]
 
+        if self.hparams.pooling == "add":
+            source_set_representation = x.sum(dim=1)  # [n_molecules, n_embd]
+        elif self.hparams.pooling == "attention":
+            source_set_representation = self.attention_pooling(x)
+        else:
+            raise ValueError(f"Unknown pooling method: {self.hparams.pooling}")
         return source_set_representation
 
     def compute_atom_type_loss(
@@ -329,7 +366,14 @@ class MolGen(LightningModule):
         # between the random and target position.
         # Interpolation: t = 0 --> pos_random, t=1 --> target_pos
         pos_random_expanded = pos_random[batch_target_contiguous]  # [n_target_atoms, 3]
-        time_step = torch.rand(n_target_atoms, device=device)  # [n_target_atoms]
+        if self.hparams.time_step_sampling == "uniform":
+            time_step = self.sample_timesteps_uniform(
+                n_target_atoms, device=device
+            )  # [n_target_atoms]
+        elif self.hparams.time_step_sampling == "logit_normal":
+            time_step = 0.98 * self.sample_timesteps_logit_normal(
+                n_target_atoms, device=device, m=0.8, s=1.7
+            ) + 0.02 * self.sample_timesteps_uniform(n_target_atoms, device=device)
         interpolation = pos_target - pos_random_expanded  # [n_target_atoms, 3]
         interpolated_pos = pos_random_expanded + interpolation * time_step.unsqueeze(
             1
@@ -352,6 +396,18 @@ class MolGen(LightningModule):
         loss_fm = torch.mean((output_fm - interpolation) ** 2)
 
         return loss_fm
+
+    def sample_timesteps_uniform(self, num_samples, device):
+        """
+        Sample timesteps from a uniform distribution.
+        """
+        return torch.rand(num_samples, device=device)
+
+    def sample_timesteps_logit_normal(self, num_samples, device, m=0.8, s=1.7):
+        # Logit-Normal Sampling from https://arxiv.org/pdf/2403.03206.pdf
+        u = torch.randn(num_samples, device=device) * s + m
+        t = 1 / (1 + torch.exp(-u))
+        return t
 
     def compute_vector_field(
         self,
@@ -400,16 +456,39 @@ class MolGen(LightningModule):
             x
         )  # [n_target_atoms, n_embd]
 
-        # (4) Add embeddings up and predict the vector field
-        x = (
-            positional_embedding
-            + time_embeddings
-            + target_atom_type_embeddings
-            + source_set_representation[
-                noisy_atom_to_source_set_mapping
-            ]  # [n_target_atoms, n_embd]
-        )  # [n_target_atoms, n_embd]
-        output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
+        if self.hparams.fm_conditioning == "add":
+            # (4) Add embeddings up and predict the vector field
+            x = (
+                positional_embedding
+                + time_embeddings
+                + target_atom_type_embeddings
+                + source_set_representation[noisy_atom_to_source_set_mapping]
+            )  # [n_target_atoms, n_embd]
+            output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
+
+        elif self.hparams.fm_conditioning == "concat":
+            x = positional_embedding + time_embeddings
+            condition = (
+                target_atom_type_embeddings
+                + source_set_representation[noisy_atom_to_source_set_mapping]
+            )  # [n_target_atoms, n_embd]
+            x = torch.cat([x, condition], dim=-1)  # [n_target_atoms, 2*n_embd]
+            output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
+
+        elif self.hparams.fm_conditioning == "ada":
+            x = positional_embedding + time_embeddings
+            condition = (
+                target_atom_type_embeddings
+                + source_set_representation[noisy_atom_to_source_set_mapping]
+            )  # [n_target_atoms, n_embd]
+            output_fm = self.ada_mlp(
+                pos_t, time_step, condition
+            )  # [n_target_atoms, 2*n_embd]
+
+        else:
+            raise ValueError(
+                f"Unknown fm_conditioning method: {self.hparams.fm_conditioning}"
+            )
 
         return output_fm
 

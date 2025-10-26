@@ -1,9 +1,9 @@
 #!/bin/bash
 
-#SBATCH --job-name=run04     # Job name
-#SBATCH --output=/data/cluster/logs_DR/run04.out
-#SBATCH --error=/data/cluster/logs_DR/run04.err
-#SBATCH --nodelist=node04
+#SBATCH --job-name=run09     # Job name
+#SBATCH --output=/data/cluster/logs_DR/run09.out
+#SBATCH --error=/data/cluster/logs_DR/run09.err
+#SBATCH --nodelist=node09
 #SBATCH --exclude=node[17-24]
 #SBATCH --partition=long
 #SBATCH --nodes=1
