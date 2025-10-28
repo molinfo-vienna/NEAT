@@ -43,6 +43,7 @@ def training(args: argparse.Namespace) -> None:
         DATA_ROOT,
         batch_size=params["batch_size"],
         split=params["data_split"],
+        num_workers=4,
     )
     datamodule.setup()
 
@@ -75,8 +76,9 @@ def training(args: argparse.Namespace) -> None:
         log_every_n_steps=8,
         callbacks=callbacks,
         accumulate_grad_batches=accumulate_grad_batches,
-        gradient_clip_val=1.0,
-        gradient_clip_algorithm="norm",
+        # gradient_clip_val=1.0,
+        # gradient_clip_algorithm="norm",
+        precision="16-mixed",
     )
     trainer.fit(model=model, datamodule=datamodule)
 

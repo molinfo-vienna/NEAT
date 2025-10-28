@@ -84,7 +84,7 @@ class SourceTargetSplitter:
         num_iterations_per_graph = (
             data.diameter * torch.rand(data.diameter.size(0), device=device)
         ).long()
-        max_num_iterations = num_iterations_per_graph.max().item()
+        max_num_iterations = num_iterations_per_graph.max()
 
         for iteration in range(max_num_iterations):
             # For graphs that have not yet reached their iteration limit
@@ -304,77 +304,77 @@ class SourceTargetSplitter:
 
         return random_edges
 
-    def create_rdkit_molecule(
-        self, data, source_index, target_index, output_file="molecule.png"
-    ):
-        """
-        Create an RDKit molecule object from PyTorch Geometric data and visualize it.
+    # def create_rdkit_molecule(
+    #     self, data, source_index, target_index, output_file="molecule.png"
+    # ):
+    #     """
+    #     Create an RDKit molecule object from PyTorch Geometric data and visualize it.
 
-        Parameters:
-            data: PyTorch Geometric data object containing atom and bond information.
-            source_index: List or tensor of indices pointing to source atoms (colored blue).
-            target_index: List or tensor of indices pointing to target atoms (colored red).
-            output_file: File name for saving the molecule visualization as a PNG.
-        """
-        # Create an empty RDKit molecule
-        mol = Chem.RWMol()
+    #     Parameters:
+    #         data: PyTorch Geometric data object containing atom and bond information.
+    #         source_index: List or tensor of indices pointing to source atoms (colored blue).
+    #         target_index: List or tensor of indices pointing to target atoms (colored red).
+    #         output_file: File name for saving the molecule visualization as a PNG.
+    #     """
+    #     # Create an empty RDKit molecule
+    #     mol = Chem.RWMol()
 
-        # Add atoms to the molecule
-        atom_mapping = {}  # Map PyTorch Geometric atom indices to RDKit atom indices
-        for i, atomic_num in enumerate(data.x.tolist()):
-            atom = Chem.Atom(atomic_num)
-            atom_idx = mol.AddAtom(atom)
-            atom_mapping[i] = atom_idx
+    #     # Add atoms to the molecule
+    #     atom_mapping = {}  # Map PyTorch Geometric atom indices to RDKit atom indices
+    #     for i, atomic_num in enumerate(data.x.tolist()):
+    #         atom = Chem.Atom(atomic_num)
+    #         atom_idx = mol.AddAtom(atom)
+    #         atom_mapping[i] = atom_idx
 
-        # Add bonds to the molecule
-        bond_types = [
-            Chem.BondType.SINGLE,
-            Chem.BondType.DOUBLE,
-            Chem.BondType.TRIPLE,
-            Chem.BondType.AROMATIC,
-        ]
-        for edge, edge_attr in zip(data.edge_index.T.tolist(), data.edge_attr.tolist()):
-            start, end = edge
-            bond_type_idx = edge_attr.index(
-                1
-            )  # Find the index of the one-hot encoded bond type
-            bond_type = bond_types[bond_type_idx]
-            try:
-                mol.AddBond(atom_mapping[start], atom_mapping[end], bond_type)
-            except Exception as e:
-                print(f"Error adding bond {start}-{end}: {e}")
-                continue
+    #     # Add bonds to the molecule
+    #     bond_types = [
+    #         Chem.BondType.SINGLE,
+    #         Chem.BondType.DOUBLE,
+    #         Chem.BondType.TRIPLE,
+    #         Chem.BondType.AROMATIC,
+    #     ]
+    #     for edge, edge_attr in zip(data.edge_index.T.tolist(), data.edge_attr.tolist()):
+    #         start, end = edge
+    #         bond_type_idx = edge_attr.index(
+    #             1
+    #         )  # Find the index of the one-hot encoded bond type
+    #         bond_type = bond_types[bond_type_idx]
+    #         try:
+    #             mol.AddBond(atom_mapping[start], atom_mapping[end], bond_type)
+    #         except Exception as e:
+    #             print(f"Error adding bond {start}-{end}: {e}")
+    #             continue
 
-        # Finalize the molecule
-        mol = mol.GetMol()
+    #     # Finalize the molecule
+    #     mol = mol.GetMol()
 
-        # Prepare atom coloring
-        atom_colors = {}
-        for idx in source_index:
-            atom_colors[atom_mapping[idx.detach().item()]] = (
-                0.0,
-                0.0,
-                1.0,
-            )  # Blue for source atoms
-        for idx in target_index:
-            atom_colors[atom_mapping[idx.detach().item()]] = (
-                1.0,
-                0.0,
-                0.0,
-            )  # Red for target atoms
+    #     # Prepare atom coloring
+    #     atom_colors = {}
+    #     for idx in source_index:
+    #         atom_colors[atom_mapping[idx.detach().item()]] = (
+    #             0.0,
+    #             0.0,
+    #             1.0,
+    #         )  # Blue for source atoms
+    #     for idx in target_index:
+    #         atom_colors[atom_mapping[idx.detach().item()]] = (
+    #             1.0,
+    #             0.0,
+    #             0.0,
+    #         )  # Red for target atoms
 
-        # Visualize the molecule
-        drawer = Draw.MolDraw2DCairo(500, 500)  # Create a 500x500 PNG canvas
-        drawer.DrawMolecule(
-            mol,
-            highlightAtoms=list(atom_colors.keys()),
-            highlightAtomColors=atom_colors,
-        )
-        drawer.FinishDrawing()
+    #     # Visualize the molecule
+    #     drawer = Draw.MolDraw2DCairo(500, 500)  # Create a 500x500 PNG canvas
+    #     drawer.DrawMolecule(
+    #         mol,
+    #         highlightAtoms=list(atom_colors.keys()),
+    #         highlightAtomColors=atom_colors,
+    #     )
+    #     drawer.FinishDrawing()
 
-        # Save the image to a file
-        with open(output_file, "wb") as f:
-            f.write(drawer.GetDrawingText())
+    #     # Save the image to a file
+    #     with open(output_file, "wb") as f:
+    #         f.write(drawer.GetDrawingText())
 
-        print(f"Molecule visualization saved to {output_file}")
-        return mol
+    #     print(f"Molecule visualization saved to {output_file}")
+    #     return mol

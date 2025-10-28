@@ -78,9 +78,6 @@ class MolGen(LightningModule):
                 bias=self.hparams.bias,
             )
 
-        # The atom types are supervised with a cross-entropy loss
-        self.bce_loss = torch.nn.BCEWithLogitsLoss()
-
         # Weight tying
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
@@ -158,6 +155,7 @@ class MolGen(LightningModule):
     def _init_weights(self, module):
         """Initialize weights as in NanoGPT"""
         if isinstance(module, torch.nn.Linear):
+            # std is chosen w.r.t. sqrt(embd_dim)
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)

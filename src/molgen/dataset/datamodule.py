@@ -14,11 +14,12 @@ class DataModule(LightningDataModule):
         training_data_dir: str,
         batch_size: int = None,
         split: str = "random",
+        num_workers: int = 4,
     ) -> None:
         super(DataModule, self).__init__()
         self.training_data_dir = training_data_dir
         self.batch_size = batch_size
-        self.num_workers = 4
+        self.num_workers = num_workers
         self.split = split
 
     def setup(self, stage: str = "fit") -> None:
