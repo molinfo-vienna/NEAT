@@ -63,3 +63,12 @@ if __name__ == "__main__":
     n_unique = compute_uniqueness(mols)
     print(f"Number of valid molecules: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)")
     print(f"Number of unique molecules: {n_unique} out of {n_valid} valid molecules ({n_unique/n_valid*100:.2f}%)")
+
+    img = Chem.Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
+    img.save(os.path.join(params["data_path"], "generated_molecules.png"))
+
+    mols_2d = builder.generate_rdkit_molecules(optimized_for_2d=True)
+    img = Chem.Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
+    img.save(os.path.join(params["data_path"], "generated_molecules_2d.png"))
+
+    print(f"Saved generated molecules images to {os.path.join(params['data_path'])}.")
