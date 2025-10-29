@@ -1,7 +1,7 @@
 import logging
 import os
 import torch
-from rdkit.Chem import Mol, MolFromXYZBlock, rdDetermineBonds, rdDepictor
+from rdkit.Chem import Mol, MolFromXYZBlock, rdDetermineBonds, rdDepictor, RemoveHs
 
 
 class MoleculeBuilder():
@@ -44,7 +44,7 @@ class MoleculeBuilder():
 
         return "\n".join(xyz_lines)
 
-    def generate_rdkit_molecules(self, optimized_for_2d=False):
+    def generate_rdkit_molecules(self, optimized_for_2d=False, remove_hydrogens=False):
         mols = []
         unique_batches = self.batch.unique().tolist()
 
@@ -60,6 +60,8 @@ class MoleculeBuilder():
                 rdDetermineBonds.DetermineBonds(mol, charge=0)
                 if optimized_for_2d:
                     rdDepictor.Compute2DCoords(mol)
+                if remove_hydrogens:
+                    mol = RemoveHs(mol)
                 mols.append(mol)
             except Exception as e:
                 logging.warning(f"Error processing molecule: {e}")

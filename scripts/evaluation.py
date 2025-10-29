@@ -61,13 +61,15 @@ if __name__ == "__main__":
 
     n_valid = compute_validity(mols)
     n_unique = compute_uniqueness(mols)
-    print(f"Number of valid molecules: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)")
-    print(f"Number of unique molecules: {n_unique} out of {n_valid} valid molecules ({n_unique/n_valid*100:.2f}%)")
+
+    with open(os.path.join(params["data_path"], "evaluation_results.txt"), "w") as f:
+        f.write(f"Number of valid molecules: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)\n")
+        f.write(f"Number of unique molecules: {n_unique} out of {n_valid} valid molecules ({n_unique/n_valid*100:.2f}%)\n")
 
     img = Chem.Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules.png"))
 
-    mols_2d = builder.generate_rdkit_molecules(optimized_for_2d=True)
+    mols_2d = builder.generate_rdkit_molecules(optimized_for_2d=True, remove_hydrogens=True)
     img = Chem.Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules_2d.png"))
 
