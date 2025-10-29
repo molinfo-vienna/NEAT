@@ -1,5 +1,5 @@
 accumulate_grad_batches: 1
-batch_size: 2048
+batch_size: 512
 bias: True
 block_size: 512
 data_set: QM9
@@ -14,6 +14,9 @@ n_head: 12
 n_layer: 12
 n_layers_fm: 6
 pooling: add
+pos_embd_tying: True
+qk_norm: False
+time_step_resampling: 4
 time_step_sampling: logit_normal
 vocab_size: 16
 weight_decay: 1.e-6

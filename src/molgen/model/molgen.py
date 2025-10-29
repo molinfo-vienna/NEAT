@@ -32,6 +32,9 @@ class MolGen(LightningModule):
         self.hparams.setdefault("pooling", "add")
         self.hparams.setdefault("fm_conditioning", "add")
         self.hparams.setdefault("time_step_sampling", "uniform")
+        self.hparams.setdefault("qk_norm", False)
+        self.hparams.setdefault("pos_embd_tying", False)
+        self.hparams.setdefault("time_step_resampling", 4)
 
         # Atom type embedding layer
         self.atom_type_embedding = torch.nn.Embedding(
@@ -58,6 +61,7 @@ class MolGen(LightningModule):
                         embed_dim=self.hparams.n_embd,
                         num_heads=self.hparams.n_head,
                     ),
+                    self.hparams.qk_norm,
                 )
                 for _ in range(self.hparams.n_layer)
             ]
@@ -90,6 +94,10 @@ class MolGen(LightningModule):
         self.fourier_embedding_layer_fm = FourierPositionEncoding(
             out_dim=self.hparams.n_embd
         )
+        if self.hparams.pos_embd_tying is True:
+            self.fourier_embedding_layer_fm.linear.weight = (
+                self.fourier_embedding_layer.linear.weight
+            )
 
         if self.hparams.fm_conditioning != "ada":
             # A simple MLP with layer norm used for the flow network
@@ -335,6 +343,7 @@ class MolGen(LightningModule):
         stop_tokens,
         source_set_representation,
         device,
+        resampling=4,
     ):
         x_target.to(device)
         pos_target.to(device)
@@ -364,15 +373,34 @@ class MolGen(LightningModule):
         # between the random and target position.
         # Interpolation: t = 0 --> pos_random, t=1 --> target_pos
         pos_random_expanded = pos_random[batch_target_contiguous]  # [n_target_atoms, 3]
+        interpolation = pos_target - pos_random_expanded  # [n_target_atoms, 3]
+
+        # For each of these paths, we draw k random time steps
+        resampling = self.hparams.time_step_resampling
         if self.hparams.time_step_sampling == "uniform":
             time_step = self.sample_timesteps_uniform(
-                n_target_atoms, device=device
-            )  # [n_target_atoms]
+                n_target_atoms * resampling, device=device
+            )  # [n_target_atoms * k]
         elif self.hparams.time_step_sampling == "logit_normal":
             time_step = 0.98 * self.sample_timesteps_logit_normal(
-                n_target_atoms, device=device, m=0.8, s=1.7
-            ) + 0.02 * self.sample_timesteps_uniform(n_target_atoms, device=device)
-        interpolation = pos_target - pos_random_expanded  # [n_target_atoms, 3]
+                n_target_atoms * resampling, device=device, m=0.8, s=1.7
+            ) + 0.02 * self.sample_timesteps_uniform(
+                n_target_atoms * resampling, device=device
+            )
+
+        # Since we sample k time steps per path, we need to expand all other tensors accordingly
+        interpolation = torch.cat([interpolation for _ in range(resampling)], dim=0)
+        pos_random_expanded = torch.cat(
+            [pos_random_expanded for _ in range(resampling)], dim=0
+        )
+        pos_target = torch.cat([pos_target for _ in range(resampling)], dim=0)
+        source_set_representations = source_set_representation[batch_target]
+        source_set_representations = torch.cat(
+            [source_set_representations for _ in range(resampling)], dim=0
+        )
+        x_target = torch.cat([x_target for _ in range(resampling)], dim=0)
+
+        # Now we calculate k interpolated positions per path given the sampled time steps
         interpolated_pos = pos_random_expanded + interpolation * time_step.unsqueeze(
             1
         )  # [n_target_atoms, 3]
@@ -383,8 +411,7 @@ class MolGen(LightningModule):
             x_target,
             interpolated_pos,
             time_step,
-            batch_target,
-            source_set_representation,
+            source_set_representations,
             device,
         )  # [n_target_atoms, 3]
 
@@ -412,7 +439,6 @@ class MolGen(LightningModule):
         x: Tensor,
         pos_t: Tensor,
         time_step: Tensor,
-        noisy_atom_to_source_set_mapping: Tensor,
         source_set_representation: Tensor,
         device: torch.device,
     ):
@@ -434,7 +460,6 @@ class MolGen(LightningModule):
         x.to(device)
         pos_t.to(device)
         time_step.to(device)
-        noisy_atom_to_source_set_mapping.to(device)
         source_set_representation.to(device)
 
         # (1) Embed time steps with sinusoidal embeddings
@@ -460,15 +485,14 @@ class MolGen(LightningModule):
                 positional_embedding
                 + time_embeddings
                 + target_atom_type_embeddings
-                + source_set_representation[noisy_atom_to_source_set_mapping]
+                + source_set_representation
             )  # [n_target_atoms, n_embd]
             output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
 
         elif self.hparams.fm_conditioning == "concat":
             x = positional_embedding + time_embeddings
             condition = (
-                target_atom_type_embeddings
-                + source_set_representation[noisy_atom_to_source_set_mapping]
+                target_atom_type_embeddings + source_set_representation
             )  # [n_target_atoms, n_embd]
             x = torch.cat([x, condition], dim=-1)  # [n_target_atoms, 2*n_embd]
             output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
@@ -476,8 +500,7 @@ class MolGen(LightningModule):
         elif self.hparams.fm_conditioning == "ada":
             x = positional_embedding + time_embeddings
             condition = (
-                target_atom_type_embeddings
-                + source_set_representation[noisy_atom_to_source_set_mapping]
+                target_atom_type_embeddings + source_set_representation
             )  # [n_target_atoms, n_embd]
             output_fm = self.ada_mlp(
                 pos_t, time_step, condition
@@ -689,8 +712,7 @@ class MolGen(LightningModule):
                         x_next[~x_next_mask],
                         pos_next,
                         time_step,
-                        batch_target,
-                        source_set_representation[~x_next_mask],
+                        source_set_representation[~x_next_mask][batch_target],
                         device=device,
                     )
                 )
