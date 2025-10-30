@@ -32,8 +32,6 @@ class MolGen(LightningModule):
         self.hparams.setdefault("pooling", "add")
         self.hparams.setdefault("fm_conditioning", "add")
         self.hparams.setdefault("time_step_sampling", "uniform")
-        self.hparams.setdefault("qk_norm", False)
-        self.hparams.setdefault("pos_embd_tying", False)
         self.hparams.setdefault("time_step_resampling", 4)
 
         # Atom type embedding layer
@@ -61,7 +59,6 @@ class MolGen(LightningModule):
                         embed_dim=self.hparams.n_embd,
                         num_heads=self.hparams.n_head,
                     ),
-                    self.hparams.qk_norm,
                 )
                 for _ in range(self.hparams.n_layer)
             ]
@@ -94,10 +91,6 @@ class MolGen(LightningModule):
         self.fourier_embedding_layer_fm = FourierPositionEncoding(
             out_dim=self.hparams.n_embd
         )
-        if self.hparams.pos_embd_tying is True:
-            self.fourier_embedding_layer_fm.linear.weight = (
-                self.fourier_embedding_layer.linear.weight
-            )
 
         if self.hparams.fm_conditioning != "ada":
             # A simple MLP with layer norm used for the flow network

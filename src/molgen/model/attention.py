@@ -25,7 +25,7 @@ class LayerNorm(nn.Module):
 
 
 class MaskedBidirectionalAttention(nn.Module):
-    def __init__(self, n_embd, n_head, dropout, bias, pos_embedder=None, qk_norm=False):
+    def __init__(self, n_embd, n_head, dropout, bias, pos_embedder=None):
         super().__init__()
         assert n_embd % n_head == 0
         # key, query, value projections for all heads, but in a batch
@@ -39,10 +39,6 @@ class MaskedBidirectionalAttention(nn.Module):
         self.n_embd = n_embd
         self.dropout = dropout
         self.pos_embedder = pos_embedder
-        self.qk_norm = qk_norm
-        if qk_norm:
-            self.q_norm = nn.RMSNorm(n_embd // n_head, eps=1e-8)
-            self.k_norm = nn.RMSNorm(n_embd // n_head, eps=1e-8)
 
     def forward(self, x, attn_mask=None, pos=None):
         B, T, C = (
@@ -73,9 +69,6 @@ class MaskedBidirectionalAttention(nn.Module):
         # attn_mask = attn_mask.expand(
         #     -1, self.hparams.n_head, -1, -1
         # )  # [n_molecules, n_head, 1, max_atom_count]
-
-        if self.qk_norm:
-            q, k = self.q_norm(q), self.k_norm(k)
 
         if self.pos_embedder and pos is not None:
             q, k = self.pos_embedder(q, k, pos)
@@ -193,11 +186,11 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, n_embd, n_head, dropout, bias, pos_embedder=None, qk_norm=False):
+    def __init__(self, n_embd, n_head, dropout, bias, pos_embedder=None):
         super().__init__()
         self.ln_1 = LayerNorm(n_embd, bias=bias)
         self.attn = MaskedBidirectionalAttention(
-            n_embd, n_head, dropout, bias, pos_embedder, qk_norm=qk_norm
+            n_embd, n_head, dropout, bias, pos_embedder
         )
         self.ln_2 = LayerNorm(n_embd, bias=bias)
         self.mlp = MLP(n_embd, dropout, bias)
