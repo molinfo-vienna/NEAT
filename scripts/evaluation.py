@@ -14,6 +14,7 @@ def compute_validity(mols):
             num_valid += 1
     return num_valid
 
+
 def compute_uniqueness(mols):
     unique_smiles = set()
     for mol in mols:
@@ -21,6 +22,7 @@ def compute_uniqueness(mols):
             smiles = Chem.MolToSmiles(mol, canonical=True)
             unique_smiles.add(smiles)
     return len(unique_smiles)
+
 
 def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -34,6 +36,7 @@ def parseArgs() -> argparse.Namespace:
     )
 
     return parser.parse_args()
+
 
 if __name__ == "__main__":
 
@@ -52,24 +55,27 @@ if __name__ == "__main__":
         Loader=yaml.FullLoader,
     )
 
-    builder = MoleculeBuilder(
-        data_path=params["data_path"],
-        num_molecules=params["num_molecules"],
-    )
-
-    mols = builder.generate_rdkit_molecules()
+    builder = MoleculeBuilder()
+    x, pos, batch = builder.load_tensor_from_file(params["data_path"])
+    mols = builder.generate_rdkit_molecules(x, pos, batch)
 
     n_valid = compute_validity(mols)
     n_unique = compute_uniqueness(mols)
 
     with open(os.path.join(params["data_path"], "evaluation_results.txt"), "w") as f:
-        f.write(f"Number of valid molecules: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)\n")
-        f.write(f"Number of unique molecules: {n_unique} out of {n_valid} valid molecules ({n_unique/n_valid*100:.2f}%)\n")
+        f.write(
+            f"Number of valid molecules: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)\n"
+        )
+        f.write(
+            f"Number of unique molecules: {n_unique} out of {n_valid} valid molecules ({n_unique/n_valid*100:.2f}%)\n"
+        )
 
     img = Chem.Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules.png"))
 
-    mols_2d = builder.generate_rdkit_molecules(optimized_for_2d=True, remove_hydrogens=True)
+    mols_2d = builder.generate_rdkit_molecules(
+        x, pos, batch, optimized_for_2d=True, remove_hydrogens=True
+    )
     img = Chem.Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules_2d.png"))
 

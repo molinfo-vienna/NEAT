@@ -632,10 +632,10 @@ class MolGen(LightningModule):
     def generate(
         self,
         batch_size: int = 1,
-        max_atoms: int = 50,
+        max_atoms: int = 100,
         temperature: float = 1.0,
         top_k: int = None,
-        num_time_steps: int = 100,
+        num_time_steps: int = 250,
         device: torch.device = torch.device("cuda"),
     ):
         # Initialize starting atom type with all carbon atoms

@@ -9,7 +9,7 @@ import torch
 import torch_geometric
 
 from molgen.dataset import DataModule
-from molgen.model import MolGen, CurriculumLearningScheduler
+from molgen.model import MolGen, CurriculumLearningScheduler, GenerationMonitor
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -62,6 +62,7 @@ def training(args: argparse.Namespace) -> None:
     )
     callbacks = [
         # CurriculumLearningScheduler(1, 25, 1.01),
+        GenerationMonitor(num_samples=100, every_n_epochs=2),
         ModelCheckpoint(
             monitor="val/val_loss",
             mode="min",

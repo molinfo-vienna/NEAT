@@ -41,10 +41,10 @@ def generate(args: argparse.Namespace) -> None:
 
     # Checkpoints path (find the first .ckpt file in the checkpoints folder)
     checkpoints_dir = os.path.join(params["checkpoints_path"], "checkpoints")
-    pt_files = [f for f in os.listdir(checkpoints_dir) if f.endswith('.ckpt')]
+    pt_files = [f for f in os.listdir(checkpoints_dir) if f.endswith(".ckpt")]
     if not pt_files:
         raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")
-    
+
     CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
     print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
 
@@ -61,13 +61,14 @@ def generate(args: argparse.Namespace) -> None:
             top_k=params["top_k"],
             num_time_steps=params["num_time_steps"],
         )
-    
+
     # Save molecules to output file
     if not os.path.exists(params["output_path"]):
         os.makedirs(params["output_path"])
-    torch.save(x, os.path.join(params["output_path"], f"x_{params['num_molecules']}.pt"))
-    torch.save(pos, os.path.join(params["output_path"], f"pos_{params['num_molecules']}.pt"))
-    torch.save(batch, os.path.join(params["output_path"], f"batch_{params['num_molecules']}.pt"))
+    torch.save(x, os.path.join(params["output_path"], "x.pt"))
+    torch.save(pos, os.path.join(params["output_path"], "pos.pt"))
+    torch.save(batch, os.path.join(params["output_path"], "batch.pt"))
+
 
 def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
