@@ -2,13 +2,11 @@ import argparse
 import os
 import yaml
 
-from lightning import Trainer, seed_everything
-from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
 import torch
 import torch_geometric
 
-from molgen.dataset import DataModule
+from lightning import seed_everything
+
 from molgen.model import MolGen
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -56,7 +54,7 @@ def generate(args: argparse.Namespace) -> None:
     with torch.no_grad():
         model.eval()
         # Generate molecules
-        x, pos, batch_source = model.generate(
+        x, pos, batch = model.generate(
             batch_size=params["num_molecules"],
             max_atoms=params["max_atoms"],
             temperature=params["temperature"],
@@ -69,7 +67,7 @@ def generate(args: argparse.Namespace) -> None:
         os.makedirs(params["output_path"])
     torch.save(x, os.path.join(params["output_path"], f"x_{params['num_molecules']}.pt"))
     torch.save(pos, os.path.join(params["output_path"], f"pos_{params['num_molecules']}.pt"))
-    torch.save(batch_source, os.path.join(params["output_path"], f"batch_source_{params['num_molecules']}.pt"))
+    torch.save(batch, os.path.join(params["output_path"], f"batch_{params['num_molecules']}.pt"))
 
 def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
