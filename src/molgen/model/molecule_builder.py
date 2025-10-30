@@ -1,5 +1,6 @@
 import logging
 import os
+
 import torch
 from rdkit.Chem import Mol, MolFromXYZBlock, rdDetermineBonds
 
@@ -46,7 +47,10 @@ class MoleculeBuilder:
         return "\n".join(xyz_lines)
 
     def generate_rdkit_molecules(
-        self, x, pos, batch,
+        self,
+        x,
+        pos,
+        batch,
     ):
         mols = []
         unique_batches = batch.unique().tolist()

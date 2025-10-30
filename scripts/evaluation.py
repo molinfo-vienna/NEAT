@@ -1,8 +1,8 @@
 import argparse
 import os
-import yaml
 
-from rdkit.Chem import Draw, MolToSmiles, rdDepictor, RemoveHs
+import yaml
+from rdkit.Chem import Draw, MolToSmiles, RemoveHs, rdDepictor
 
 from molgen.model.molecule_builder import MoleculeBuilder
 
@@ -75,7 +75,7 @@ if __name__ == "__main__":
 
     for mol in mols:
         rdDepictor.Compute2DCoords(mol)
-        mol = RemoveHs(mol) 
+        mol = RemoveHs(mol)
     img = Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules_2d.png"))
 

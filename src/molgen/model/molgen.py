@@ -1,27 +1,24 @@
-from typing import Union
 import math
 import types
+from typing import Union
 
 import torch
-from torch import Tensor
 from lightning import LightningModule
-from torch_geometric.data import Data
-from torch.optim import Optimizer
+from torch import Tensor
 from torch.nn import functional as F
+from torch.nn.functional import one_hot
+from torch.optim import Optimizer
+from torch_geometric.data import Data
 from torch_geometric.nn.models import MLP
 from torch_geometric.nn.pool import global_mean_pool
-from torch.nn.functional import one_hot
 
-from .attention import (
-    LayerNorm,
-    Block,
-)
+from .attention import AttentionPooling, Block, LayerNorm
 from .augmentation import RandomRotationAugmentation
-from .utils import pad_and_mask_sequences, create_time_embeddings
-from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
-from .splitting import SourceTargetSplitter
-from .attention import AttentionPooling
+from .positional_encoding import (AxialRotaryPositionEncoding,
+                                  FourierPositionEncoding)
 from .simple_mlp import SimpleMLPAdaLN
+from .splitting import SourceTargetSplitter
+from .utils import create_time_embeddings, pad_and_mask_sequences
 
 
 class MolGen(LightningModule):
@@ -166,7 +163,6 @@ class MolGen(LightningModule):
     def forward(self, data):
         device = data.x.device
         atom_counts = torch.bincount(data.batch)
-        batch_size = atom_counts.size(0)
         max_atom_count = atom_counts.max()
         assert (
             max_atom_count <= self.hparams.block_size

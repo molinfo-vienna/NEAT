@@ -1,2 +1,2 @@
-from .molgen import *
 from .callbacks import *
+from .molgen import *

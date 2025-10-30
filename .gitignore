@@ -9,3 +9,4 @@ __pycache__/
 *.tar.gz
 *.egg-info
 build
+.flake8

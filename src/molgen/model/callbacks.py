@@ -1,7 +1,7 @@
-from lightning import LightningModule, Callback, Trainer
 import torch
-from torch_geometric import transforms as T
+from lightning import Callback, LightningModule, Trainer
 from rdkit import Chem
+
 from molgen.model.molecule_builder import MoleculeBuilder
 
 

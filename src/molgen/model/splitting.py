@@ -3,11 +3,6 @@ from torch_geometric.data import Data
 from torch_geometric.nn.pool import global_add_pool
 
 
-import torch
-from rdkit import Chem
-from rdkit.Chem import Draw
-
-
 class SourceTargetSplitter:
     def __init__(self, splitting_mode="random", target_set_max_size: int = -1):
         self.target_set_max_size = target_set_max_size

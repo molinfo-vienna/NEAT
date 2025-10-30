@@ -1,8 +1,5 @@
-import os
-
-from lightning import LightningDataModule
-import pandas as pd
 import torch
+from lightning import LightningDataModule
 from torch_geometric.loader import DataLoader
 
 from .dataset import DataSet

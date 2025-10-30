@@ -1,10 +1,9 @@
 import argparse
 import os
-import yaml
 
 import torch
 import torch_geometric
-
+import yaml
 from lightning import seed_everything
 
 from molgen.model import MolGen

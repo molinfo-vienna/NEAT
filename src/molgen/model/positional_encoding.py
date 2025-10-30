@@ -1,7 +1,6 @@
 # Credit: https://github.com/apple/ml-simplefold/blob/main/src/simplefold/model/torch/pos_embed.py
 # This file was taken from the SimpleFold repository as is.
 
-import math
 import torch
 from torch import nn
 

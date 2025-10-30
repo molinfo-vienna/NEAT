@@ -1,15 +1,15 @@
 import argparse
 import os
-import yaml
 
-from lightning import Trainer, seed_everything
-from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
-from lightning.pytorch.callbacks import ModelCheckpoint
 import torch
 import torch_geometric
+import yaml
+from lightning import Trainer, seed_everything
+from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 
 from molgen.dataset import DataModule
-from molgen.model import MolGen, CurriculumLearningScheduler, GenerationMonitor
+from molgen.model import GenerationMonitor, MolGen
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 

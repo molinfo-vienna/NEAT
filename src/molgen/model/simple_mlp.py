@@ -2,9 +2,10 @@
 # https://github.com/NVlabs/edm/blob/008a4e5316c8e3bfe61a62f874bddba254295afb/training/networks.py
 # https://github.com/NVlabs/edm/blob/008a4e5316c8e3bfe61a62f874bddba254295afb/training/loss.py
 
-from torch import nn
-import torch
 import numpy as np
+import torch
+import torch.nn.functional as F
+from torch import nn
 
 
 # https://github.com/facebookresearch/dinov2/blob/e1277af2ba9496fbadf7aec6eba56e8d882d1e35/dinov2/layers/swiglu_ffn.py

@@ -3,21 +3,20 @@
 # https://github.com/atomicarchitects/symphony/blob/590621f27fdf74d7ca13939185d9cfb1e881b775/symphony/data/datasets/utils.py
 # https://github.com/aspuru-guzik-group/quetzal/blob/main/qm9.py
 
-import os
 import logging
-import zipfile
+import os
 import urllib
+import zipfile
 from typing import Dict
-import numpy as np
-import yaml
 
-from tqdm import tqdm
-from rdkit import Chem
-from rdkit.Chem.rdchem import HybridizationType
 import networkx as nx
-from rdkit import RDLogger
+import numpy as np
 import torch
-from torch_geometric.data import InMemoryDataset, Data
+import yaml
+from rdkit import Chem, RDLogger
+from rdkit.Chem.rdchem import HybridizationType
+from torch_geometric.data import Data, InMemoryDataset
+from tqdm import tqdm
 
 RDLogger.DisableLog("rdApp.*")  # Disables all RDKit warnings and informational messages
 
@@ -151,6 +150,7 @@ class DataSet(InMemoryDataset):
             )  # Return the molecule and a flag indicating successful sanitization
         except Exception as e:
             # If sanitization fails, flag it and continue
+            logging.warning(f"Sanitization failed for molecule: {e}")
             return (
                 mol,
                 False,
@@ -274,7 +274,7 @@ class DataSet(InMemoryDataset):
             try:
                 int(string)
                 return True
-            except:
+            except ValueError:
                 return False
 
         logging.info("Dropping uncharacterized molecules.")
