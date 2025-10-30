@@ -1,7 +1,7 @@
-checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_4
-output_path: /home/rjacob/MolGen/data/generated
-num_molecules: 10
+checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_6
+output_path: /home/rjacob/MolGen/data/generated_6
+num_molecules: 100
 max_atoms: 100
 temperature: 1.0
 top_k: Null
-num_time_steps: 250
+num_time_steps: 1000
