@@ -62,7 +62,7 @@ def training(args: argparse.Namespace) -> None:
     )
     callbacks = [
         # CurriculumLearningScheduler(1, 25, 1.01),
-        GenerationMonitor(num_samples=100, every_n_epochs=2),
+        GenerationMonitor(num_samples=100, every_n_epochs=50),
         ModelCheckpoint(
             monitor="val/val_loss",
             mode="min",
