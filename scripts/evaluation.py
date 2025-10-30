@@ -2,7 +2,7 @@ import argparse
 import os
 import yaml
 
-from rdkit import Chem
+from rdkit.Chem import Draw, MolToSmiles, rdDepictor, RemoveHs
 
 from molgen.model.molecule_builder import MoleculeBuilder
 
@@ -19,7 +19,7 @@ def compute_uniqueness(mols):
     unique_smiles = set()
     for mol in mols:
         if mol is not None:
-            smiles = Chem.MolToSmiles(mol, canonical=True)
+            smiles = MolToSmiles(mol, canonical=True)
             unique_smiles.add(smiles)
     return len(unique_smiles)
 
@@ -70,13 +70,13 @@ if __name__ == "__main__":
             f"Number of unique molecules: {n_unique} out of {n_valid} valid molecules ({n_unique/n_valid*100:.2f}%)\n"
         )
 
-    img = Chem.Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
+    img = Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules.png"))
 
-    mols_2d = builder.generate_rdkit_molecules(
-        x, pos, batch, optimized_for_2d=True, remove_hydrogens=True
-    )
-    img = Chem.Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
+    for mol in mols:
+        rdDepictor.Compute2DCoords(mol)
+        mol = RemoveHs(mol) 
+    img = Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules_2d.png"))
 
     print(f"Saved generated molecules images to {os.path.join(params['data_path'])}.")
