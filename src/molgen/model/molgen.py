@@ -14,8 +14,7 @@ from torch_geometric.nn.pool import global_mean_pool
 
 from .attention import AttentionPooling, Block, LayerNorm
 from .augmentation import RandomRotationAugmentation
-from .positional_encoding import (AxialRotaryPositionEncoding,
-                                  FourierPositionEncoding)
+from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
 from .simple_mlp import SimpleMLPAdaLN
 from .splitting import SourceTargetSplitter
 from .utils import create_time_embeddings, pad_and_mask_sequences
@@ -30,6 +29,7 @@ class MolGen(LightningModule):
         self.hparams.setdefault("fm_conditioning", "add")
         self.hparams.setdefault("time_step_sampling", "uniform")
         self.hparams.setdefault("time_step_resampling", 4)
+        self.hparams.setdefault("source_target_split", "cyclic")
 
         # Atom type embedding layer
         self.atom_type_embedding = torch.nn.Embedding(
@@ -84,7 +84,6 @@ class MolGen(LightningModule):
         self.atom_type_embedding.weight = self.linear_output_head.weight
 
         # So far it is the GPT logic, Flow Matching only needs an additional MLP
-        # TODO: Do we really need a seperate positional embedding layer here?
         self.fourier_embedding_layer_fm = FourierPositionEncoding(
             out_dim=self.hparams.n_embd
         )
@@ -132,7 +131,7 @@ class MolGen(LightningModule):
             )
             self.ada_mlp = SimpleMLPAdaLN(config)
 
-        self.splitter = SourceTargetSplitter(splitting_mode="cyclic")
+        self.splitter = SourceTargetSplitter(splitting_mode=self.hparams.source_target_split)
         self.rotation_augmentation = RandomRotationAugmentation()
         self.target_set_max_size = -1
 
