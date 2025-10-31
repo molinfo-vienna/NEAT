@@ -1,5 +1,5 @@
-checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_6
-output_path: /home/rjacob/MolGen/data/generated_6
+checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_9
+output_path: /home/rjacob/MolGen/data/generated_9
 num_molecules: 100
 max_atoms: 100
 temperature: 1.0

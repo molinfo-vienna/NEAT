@@ -28,7 +28,7 @@ def generate(args: argparse.Namespace) -> None:
         CONFIG_FILE_PATH = args.config_file
         print(f"Using config file: {CONFIG_FILE_PATH}")
     else:
-        CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_generate.yaml")
+        CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_generation.yaml")
         print(f"Using default config file: {CONFIG_FILE_PATH}")
 
     # Generation configs
