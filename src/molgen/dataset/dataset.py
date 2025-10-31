@@ -107,7 +107,7 @@ class DataSet(InMemoryDataset):
     def process(self):
         raw_path = self.raw_paths[0]
         vocab_path = os.path.join(
-            os.path.dirname(os.path.dirname(self.root)), "scripts", "qm9_vocab.yaml"
+            os.path.dirname(os.path.dirname(self.root)), "scripts", "qm9_small_vocab.yaml"
         )
         try:
             with open(vocab_path, "r") as file:

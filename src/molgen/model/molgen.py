@@ -635,7 +635,7 @@ class MolGen(LightningModule):
         device: torch.device = torch.device("cuda"),
     ):
         # Initialize starting atom type with all carbon atoms
-        x = torch.ones(size=(batch_size,), dtype=torch.long, device=device) * 6
+        x = torch.ones(size=(batch_size,), dtype=torch.long, device=device) * 2  # 2 for carbon
         # Initialize starting position with a random one
         pos = torch.randn(batch_size, 3, device=device)
         # Initialize the batch source tensor
