@@ -247,6 +247,12 @@ class DataSet(InMemoryDataset):
             edge_hierarchy = torch.tensor(edge_hierarchy, dtype=torch.long)
             diameter = nx.diameter(mst)
 
+            # Compute eccentricities for all nodes
+            eccentricities = nx.eccentricity(G)  # Dictionary {node: eccentricity}
+            eccentricity_tensor = torch.tensor(
+                [eccentricities[node] for node in range(len(G.nodes))], dtype=torch.long
+            )
+
             # Create PyG Data object
             data = Data(
                 x=x,
@@ -256,6 +262,7 @@ class DataSet(InMemoryDataset):
                 edge_index_mst=edge_index_mst,
                 edge_attr_mst=edge_hierarchy,
                 diameter=diameter,
+                eccentricity=eccentricity_tensor,
             )
 
             return data, sanitized

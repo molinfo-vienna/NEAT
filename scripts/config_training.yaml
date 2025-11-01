@@ -8,12 +8,13 @@ dropout: 0.1
 fm_conditioning: ada
 learning_rate: 1.e-4
 max_epochs: 5000
-n_embd: 720
-n_embd_fm: 1440
+n_embd: 360
+n_embd_fm: 720
 n_head: 12
 n_layer: 12
 n_layers_fm: 6
-pooling: add
+pooling: combined
+source_target_split: "cyclic"
 time_step_resampling: 1
 time_step_sampling: logit_normal
 vocab_size: 16
