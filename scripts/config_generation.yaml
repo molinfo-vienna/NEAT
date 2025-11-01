@@ -1,5 +1,6 @@
 checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_9
 output_path: /home/rjacob/MolGen/data/generated_9
+data_set: QM9_small_vocab
 num_molecules: 10000
 max_atoms: 100
 temperature: 1.0

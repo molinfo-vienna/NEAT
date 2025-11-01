@@ -55,7 +55,7 @@ if __name__ == "__main__":
         Loader=yaml.FullLoader,
     )
 
-    builder = MoleculeBuilder()
+    builder = MoleculeBuilder(small_vocab_size=params["data_set"] == "QM9_small_vocab")
     x, pos, batch = builder.load_tensor_from_file(params["data_path"])
     mols = builder.generate_rdkit_molecules(x, pos, batch)
 

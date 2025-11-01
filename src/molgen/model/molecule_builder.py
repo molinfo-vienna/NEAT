@@ -6,30 +6,34 @@ from rdkit.Chem import Mol, MolFromXYZBlock, rdDetermineBonds
 
 
 class MoleculeBuilder:
-    def __init__(self):
+    def __init__(self, small_vocab_size: bool=True):
         super().__init__()
-        self.atom_type_to_element = {
-            # 1: "H",  # Hydrogen
-            # 2: "H",  # Hydrogen
-            # 3: "C",  # Carbon
-            # 4: "C",  # Carbon
-            # 5: "C",  # Carbon
-            # 6: "C",  # Carbon
-            # 7: "N",  # Nitrogen
-            # 8: "N",  # Nitrogen
-            # 9: "N",  # Nitrogen
-            # 10: "N",  # Nitrogen
-            # 11: "O",  # Oxygen
-            # 12: "O",  # Oxygen
-            # 13: "O",  # Oxygen
-            # 14: "F",  # Fluorine
-            # 15: "F",  # Fluorine
-            1: "H",  # Hydrogen
-            2: "C",  # Carbon
-            3: "N",  # Nitrogen
-            4: "O",  # Oxygen
-            5: "F",  # Fluorine
-        }
+        if small_vocab_size:
+            self.atom_type_to_element = {
+                1: "H",  # Hydrogen
+                2: "C",  # Carbon
+                3: "N",  # Nitrogen
+                4: "O",  # Oxygen
+                5: "F",  # Fluorine
+            }
+        else:
+            self.atom_type_to_element = {
+                1: "H",  # Hydrogen
+                2: "H",  # Hydrogen
+                3: "C",  # Carbon
+                4: "C",  # Carbon
+                5: "C",  # Carbon
+                6: "C",  # Carbon
+                7: "N",  # Nitrogen
+                8: "N",  # Nitrogen
+                9: "N",  # Nitrogen
+                10: "N",  # Nitrogen
+                11: "O",  # Oxygen
+                12: "O",  # Oxygen
+                13: "O",  # Oxygen
+                14: "F",  # Fluorine
+                15: "F",  # Fluorine
+            }
 
     def load_tensor_from_file(self, files_path):
         x = torch.load(os.path.join(files_path, "x.pt")).detach().cpu()

@@ -1,13 +1,13 @@
 accumulate_grad_batches: 1
-batch_size: 512
+batch_size: 2048
 bias: true
 block_size: 512
-data_set: QM9
+data_set: QM9_small_vocab
 data_split: edm_split
 dropout: 0.1
 fm_conditioning: ada
 learning_rate: 0.0001
-max_epochs: 5000
+max_epochs: 10000
 n_embd: 720
 n_embd_fm: 1440
 n_head: 12
@@ -17,5 +17,5 @@ pooling: add
 source_target_split: cyclic
 time_step_resampling: 1
 time_step_sampling: logit_normal
-vocab_size: 16
+vocab_size: 6
 weight_decay: 1.0e-06

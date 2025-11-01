@@ -20,7 +20,8 @@ class GenerationMonitor(Callback):
         ):
             return
         x, pos, batch = pl_module.generate(batch_size=self.num_samples)
-        builder = MoleculeBuilder()
+        small_vocab = pl_module.hparams["data_set"] == "QM9_small_vocab"
+        builder = MoleculeBuilder(small_vocab_size=small_vocab)
         mols = builder.generate_rdkit_molecules(x, pos, batch)
         n_valid = self.compute_validity(mols)
         n_unique = self.compute_uniqueness(mols)
