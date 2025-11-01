@@ -62,8 +62,7 @@ class MoleculeBuilder:
 
             try:
                 xyz_block = self.create_xyz_block(x_mol, pos_mol)
-                raw_mol = MolFromXYZBlock(xyz_block)
-                mol = Mol(raw_mol)
+                mol = MolFromXYZBlock(xyz_block)
                 rdDetermineBonds.DetermineBonds(mol, charge=0)
                 mols.append(mol)
             except Exception as e:

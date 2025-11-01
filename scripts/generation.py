@@ -32,7 +32,6 @@ def generate(args: argparse.Namespace) -> None:
         print(f"Using default config file: {CONFIG_FILE_PATH}")
 
     # Generation configs
-    MODEL = MolGen
     params = yaml.load(
         open(CONFIG_FILE_PATH, "r"),
         Loader=yaml.FullLoader,
@@ -48,6 +47,7 @@ def generate(args: argparse.Namespace) -> None:
     print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
 
     # Load model
+    MODEL = MolGen
     model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
 
     with torch.no_grad():

@@ -70,6 +70,8 @@ if __name__ == "__main__":
             f"Number of unique molecules: {n_unique} out of {n_valid} valid molecules ({n_unique/n_valid*100:.2f}%)\n"
         )
 
+    # Only plot the first 100 molecules for clarity
+    mols = mols[:100]
     img = Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules.png"))
 
@@ -78,8 +80,8 @@ if __name__ == "__main__":
         if mol is None:
             mols_2d.append(None)
         else:
-            mol = RemoveHs(mol)
             rdDepictor.Compute2DCoords(mol)
+            mol = RemoveHs(mol)
             mols_2d.append(mol)
 
     img = Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
