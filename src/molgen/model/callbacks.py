@@ -6,7 +6,7 @@ from molgen.model.molecule_builder import MoleculeBuilder
 
 
 class GenerationMonitor(Callback):
-    def __init__(self, num_samples: int = 100, every_n_epochs: int = 50) -> None:
+    def __init__(self, num_samples: int = 10000, every_n_epochs: int = 50) -> None:
         super().__init__()
         self.num_samples = num_samples
         self.every_n_epochs = every_n_epochs

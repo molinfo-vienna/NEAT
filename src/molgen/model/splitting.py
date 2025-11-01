@@ -2,6 +2,11 @@ import torch
 from torch_geometric.data import Data
 from torch_geometric.nn.pool import global_add_pool
 
+from rdkit import Chem
+from rdkit.Chem import Draw
+
+import matplotlib.pyplot as plt
+
 
 class SourceTargetSplitter:
     def __init__(self, splitting_mode="random", target_set_max_size: int = -1):
@@ -66,8 +71,8 @@ class SourceTargetSplitter:
     def cyclic_source_target_split(self, data: Data, device=None):
         atom_counts = torch.bincount(data.batch)
 
-        # First we need to sample a random atom from each graph in the batch
-        random_nodes = (
+        # First we need to sample a random atom from each graph in the batch and mark it as a source set atom
+        marked_nodes_idx = (
             torch.cat(
                 [
                     torch.randint(0, atom_count, (1,), device=device)
@@ -76,52 +81,63 @@ class SourceTargetSplitter:
             )
             + data.ptr[:-1]
         )
+        marked_nodes_eccentricity = data.eccentricity[marked_nodes_idx]
+
+        # The number of neighbourhood hops is determined by the graph diameter
         num_iterations_per_graph = (
-            data.diameter * torch.rand(data.diameter.size(0), device=device)
-        ).long()
+            (marked_nodes_eccentricity * 1.5)
+            * torch.rand(marked_nodes_eccentricity.shape[0], device=device)
+            * 0.999
+        ).long() + 1
         max_num_iterations = num_iterations_per_graph.max()
 
         for iteration in range(max_num_iterations):
             # For graphs that have not yet reached their iteration limit
-            mask = iteration < num_iterations_per_graph
-            if mask.sum() == 0:
+            active_graphs_mask = iteration < num_iterations_per_graph
+            if active_graphs_mask.sum() == 0:
                 break
-            masked_atoms = mask[data.batch]
-            random_atom_mask = torch.zeros_like(
+            active_nodes_mask = active_graphs_mask[data.batch]
+            marked_modes_mask = torch.zeros_like(
                 data.batch, device=device, dtype=torch.bool
             )
-            random_atom_mask[random_nodes] = True
-            random_nodes_mask = masked_atoms & random_atom_mask
-            random_nodes_masked = torch.nonzero(
-                random_nodes_mask, as_tuple=False
+            marked_modes_mask[marked_nodes_idx] = True
+            active_marked_nodes_mask = active_nodes_mask & marked_modes_mask
+            active_marked_node_idx = torch.nonzero(
+                active_marked_nodes_mask, as_tuple=False
             ).squeeze()
 
             # From the current random nodes, find all connected neighbours in the full graphs
-            edge_mask = torch.isin(data.edge_index[0], random_nodes_masked)
-            neighbours = data.edge_index[1][edge_mask]
+            connected_edges_mask = torch.isin(
+                data.edge_index[0], active_marked_node_idx
+            )
+            one_hop_neighbours_idx = data.edge_index[1][connected_edges_mask]
+            one_hop_neighbours_idx = torch.unique(
+                one_hop_neighbours_idx
+            )  # TODO: This should be done before sampling, no?
 
             # Randomly pick a subset of these neighbours
-            permutation = torch.randperm(neighbours.size(0))
-            neighbours = neighbours[permutation]
-            neighbours = neighbours[: int(len(neighbours) * 0.75)]
-            neighbours = torch.unique(neighbours)
+            permutation = torch.randperm(one_hop_neighbours_idx.size(0))
+            one_hop_neighbours_idx = one_hop_neighbours_idx[permutation]
+            one_hop_neighbours_idx = one_hop_neighbours_idx[
+                : int(len(one_hop_neighbours_idx) * 0.55)
+            ]
 
             # Add these neighbours to the random nodes
-            random_nodes = torch.cat((random_nodes, neighbours))
-            random_nodes = torch.unique(random_nodes)
+            marked_nodes_idx = torch.cat((marked_nodes_idx, one_hop_neighbours_idx))
+            marked_nodes_idx = torch.unique(marked_nodes_idx)
 
         # By excluding the target set atoms, we can already create the source set
-        source_set_idx = random_nodes
+        source_set_idx = marked_nodes_idx
         source_set_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
         source_set_mask[source_set_idx] = 1
         x_source = data.x[source_set_mask]
         pos_source = data.pos[source_set_mask]
         batch_source = data.batch[source_set_mask]
-        target_set_mask = ~source_set_mask
-        target_set_idx = torch.nonzero(target_set_mask, as_tuple=False).squeeze()
 
         # Now we can find all one-hop neighbours of the source set in the full graph
         # The interaction of these neighbours with the above target set defines the actual target set
+        target_set_mask = ~source_set_mask
+        target_set_idx = torch.nonzero(target_set_mask, as_tuple=False).squeeze()
         source_set_one_hop_mask = torch.isin(data.edge_index[0], source_set_idx)
         source_set_one_hop_idx = torch.unique(
             data.edge_index[1][source_set_one_hop_mask]
@@ -138,18 +154,6 @@ class SourceTargetSplitter:
         pos_target = data.pos[target_set_final_mask]
         batch_target = data.batch[target_set_final_mask]
 
-        # Let's do some final checks
-        assert source_set_mask.sum() + target_set_mask.sum() == data.x.size(
-            0
-        ), "Source and target set sizes do not add up to total atom count!"
-        assert (
-            target_set_final_mask + target_set_mask
-        ).sum() == target_set_mask.sum(), (
-            "Target set final mask needs to be a subset of target set mask!"
-        )
-
-        # Currently, I do not create stop tokens for MST splitting
-        # This should be introduced with some small probability
         source_set_atom_count = global_add_pool(source_set_mask.int(), data.batch)
         stop_tokens = source_set_atom_count == atom_counts
 
@@ -159,6 +163,20 @@ class SourceTargetSplitter:
         # ]
         # source_idx = source_set_idx[source_set_idx < data_point.num_nodes]
         # self.create_rdkit_molecule(data_point, source_idx, target_idx)
+
+        # def source_set_histogram(data, source_set_idx):
+        #     batch_source = data.batch[source_set_idx]
+        #     source_count = global_add_pool(torch.ones_like(batch_source), batch_source)
+        #     total_count = global_add_pool(torch.ones_like(data.batch), data.batch)
+        #     ratio = source_count / total_count
+        #     fig = plt.figure()
+        #     plt.hist(ratio.cpu().numpy(), bins=10, range=(0, 1))
+        #     plt.xlabel("Source set size ratio")
+        #     plt.ylabel("Number of molecules")
+        #     plt.title("Histogram of source set size ratios")
+        #     plt.savefig("source_set_histogram.png")
+
+        # source_set_histogram(data, source_set_idx)
 
         return (
             x_source,
@@ -178,64 +196,65 @@ class SourceTargetSplitter:
 
         # Now we can start from the target nodes and mark all reachable nodes in the MST
         # print("Building adjacency list for MST...")
-        source_nodes = random_edges[1]
-        target_set_idx = source_nodes.clone()
+        marked_nodes = random_edges[1]
+        source_set_idx = marked_nodes.clone()
         while True:
-            mask = torch.isin(data.edge_index_mst[0], source_nodes)
-            if mask.sum() == 0:
+            visited_edges = torch.isin(data.edge_index_mst[0], marked_nodes)
+            if visited_edges.sum() == 0:
                 break
-            target_nodes = data.edge_index_mst[1][mask]
-            target_set_idx = torch.cat((target_set_idx, target_nodes))
-            source_nodes = target_nodes
-        target_set_idx = torch.unique(target_set_idx)
+            reachable_nodes = data.edge_index_mst[1][visited_edges]
+            source_set_idx = torch.cat((source_set_idx, reachable_nodes))
+            marked_nodes = reachable_nodes
+        source_set_idx = torch.unique(source_set_idx)
+        source_set_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
+        source_set_mask[source_set_idx] = 1
 
-        # By excluding the target set atoms, we can already create the source set
-        target_set_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
-        target_set_mask[target_set_idx] = 1
-        source_set_mask = ~target_set_mask
+        # Randomly decide to invert the source set with 50% probability
+        if torch.rand(1).item() < 0.5:
+            source_set_mask = ~source_set_mask
+            source_set_idx = torch.nonzero(source_set_mask, as_tuple=False).squeeze()
+
         x_source = data.x[source_set_mask]
         pos_source = data.pos[source_set_mask]
         batch_source = data.batch[source_set_mask]
-        source_set_idx = torch.nonzero(source_set_mask, as_tuple=False).squeeze()
 
-        # Now we can find all one-hop neighbours of the source set in the full graph
-        # The interaction of these neighbours with the above target set defines the actual target set
-        source_set_one_hop_mask = torch.isin(data.edge_index[0], source_set_idx)
+        # Now we find all one-hop neighbours of the source set in the molecular graph
+        source_set_one_hop_edges_mask = torch.isin(data.edge_index[0], source_set_idx)
         source_set_one_hop_idx = torch.unique(
-            data.edge_index[1][source_set_one_hop_mask]
+            data.edge_index[1][source_set_one_hop_edges_mask]
         )
+        # We keep 1-hop neighbours that are not already in the source set in the target set
+        target_set_idx = torch.nonzero(~source_set_mask, as_tuple=False).squeeze()
         target_set_neighbours_mask = torch.isin(source_set_one_hop_idx, target_set_idx)
-        target_set_neighbours_idx = torch.unique(
+        target_set_idx = torch.unique(
             source_set_one_hop_idx[target_set_neighbours_mask]
         )
-        target_set_final_mask = torch.zeros_like(
-            data.batch, device=device, dtype=torch.bool
-        )
-        target_set_final_mask[target_set_neighbours_idx] = 1
-        x_target = data.x[target_set_final_mask]
-        pos_target = data.pos[target_set_final_mask]
-        batch_target = data.batch[target_set_final_mask]
-
-        # Let's do some final checks
-        assert source_set_mask.sum() + target_set_mask.sum() == data.x.size(
-            0
-        ), "Source and target set sizes do not add up to total atom count!"
-        assert (
-            target_set_final_mask + target_set_mask
-        ).sum() == target_set_mask.sum(), (
-            "Target set final mask needs to be a subset of target set mask!"
-        )
+        target_set_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
+        target_set_mask[target_set_idx] = 1
+        x_target = data.x[target_set_mask]
+        pos_target = data.pos[target_set_mask]
+        batch_target = data.batch[target_set_mask]
 
         # Currently, I do not create stop tokens for MST splitting
         # This should be introduced with some small probability
         stop_tokens = atom_counts == 0
 
         # data_point = data[0]
-        # target_idx = target_set_neighbours_idx[
-        #     target_set_neighbours_idx < data_point.num_nodes
-        # ]
+        # target_idx = target_set_idx[target_set_idx < data_point.num_nodes]
         # source_idx = source_set_idx[source_set_idx < data_point.num_nodes]
         # self.create_rdkit_molecule(data_point, source_idx, target_idx)
+
+        def source_set_histogram(data, source_set_idx):
+            batch_source = data.batch[source_set_idx]
+            source_count = global_add_pool(torch.ones_like(batch_source), batch_source)
+            total_count = global_add_pool(torch.ones_like(data.batch), data.batch)
+            ratio = source_count / total_count
+            fig = plt.figure()
+            plt.hist(ratio.cpu().numpy(), bins=100, range=(0, 1))
+            plt.xlabel("Source set size ratio")
+            plt.ylabel("Number of molecules")
+            plt.title("Histogram of source set size ratios")
+            plt.savefig("source_set_histogram.png")
 
         return (
             x_source,
@@ -299,77 +318,78 @@ class SourceTargetSplitter:
 
         return random_edges
 
-    # def create_rdkit_molecule(
-    #     self, data, source_index, target_index, output_file="molecule.png"
-    # ):
-    #     """
-    #     Create an RDKit molecule object from PyTorch Geometric data and visualize it.
+    def create_rdkit_molecule(
+        self, data, source_index, target_index, output_file="molecule.png"
+    ):
+        """
+        Create an RDKit molecule object from PyTorch Geometric data and visualize it.
 
-    #     Parameters:
-    #         data: PyTorch Geometric data object containing atom and bond information.
-    #         source_index: List or tensor of indices pointing to source atoms (colored blue).
-    #         target_index: List or tensor of indices pointing to target atoms (colored red).
-    #         output_file: File name for saving the molecule visualization as a PNG.
-    #     """
-    #     # Create an empty RDKit molecule
-    #     mol = Chem.RWMol()
+        Parameters:
+            data: PyTorch Geometric data object containing atom and bond information.
+            source_index: List or tensor of indices pointing to source atoms (colored blue).
+            target_index: List or tensor of indices pointing to target atoms (colored red).
+            output_file: File name for saving the molecule visualization as a PNG.
+        """
+        # Create an empty RDKit molecule
+        mol = Chem.RWMol()
 
-    #     # Add atoms to the molecule
-    #     atom_mapping = {}  # Map PyTorch Geometric atom indices to RDKit atom indices
-    #     for i, atomic_num in enumerate(data.x.tolist()):
-    #         atom = Chem.Atom(atomic_num)
-    #         atom_idx = mol.AddAtom(atom)
-    #         atom_mapping[i] = atom_idx
+        # Add atoms to the molecule
+        atom_mapping = {}  # Map PyTorch Geometric atom indices to RDKit atom indices
+        for i, atomic_num in enumerate(data.x.tolist()):
+            atom = Chem.Atom(atomic_num)
+            atom_idx = mol.AddAtom(atom)
+            atom_mapping[i] = atom_idx
 
-    #     # Add bonds to the molecule
-    #     bond_types = [
-    #         Chem.BondType.SINGLE,
-    #         Chem.BondType.DOUBLE,
-    #         Chem.BondType.TRIPLE,
-    #         Chem.BondType.AROMATIC,
-    #     ]
-    #     for edge, edge_attr in zip(data.edge_index.T.tolist(), data.edge_attr.tolist()):
-    #         start, end = edge
-    #         bond_type_idx = edge_attr.index(
-    #             1
-    #         )  # Find the index of the one-hot encoded bond type
-    #         bond_type = bond_types[bond_type_idx]
-    #         try:
-    #             mol.AddBond(atom_mapping[start], atom_mapping[end], bond_type)
-    #         except Exception as e:
-    #             print(f"Error adding bond {start}-{end}: {e}")
-    #             continue
+        # Add bonds to the molecule
+        bond_types = [
+            Chem.BondType.SINGLE,
+            Chem.BondType.DOUBLE,
+            Chem.BondType.TRIPLE,
+            Chem.BondType.AROMATIC,
+        ]
+        for edge, edge_attr in zip(data.edge_index.T.tolist(), data.edge_attr.tolist()):
+            start, end = edge
+            bond_type_idx = edge_attr.index(
+                1
+            )  # Find the index of the one-hot encoded bond type
+            bond_type = bond_types[bond_type_idx]
+            try:
+                mol.AddBond(atom_mapping[start], atom_mapping[end], bond_type)
+            except Exception as e:
+                print(f"Error adding bond {start}-{end}: {e}")
+                continue
 
-    #     # Finalize the molecule
-    #     mol = mol.GetMol()
+        # Finalize the molecule
+        mol = mol.GetMol()
 
-    #     # Prepare atom coloring
-    #     atom_colors = {}
-    #     for idx in source_index:
-    #         atom_colors[atom_mapping[idx.detach().item()]] = (
-    #             0.0,
-    #             0.0,
-    #             1.0,
-    #         )  # Blue for source atoms
-    #     for idx in target_index:
-    #         atom_colors[atom_mapping[idx.detach().item()]] = (
-    #             1.0,
-    #             0.0,
-    #             0.0,
-    #         )  # Red for target atoms
+        # Prepare atom coloring
+        atom_colors = {}
+        for idx in source_index:
+            atom_colors[atom_mapping[idx.detach().item()]] = (
+                0.0,
+                0.0,
+                1.0,
+            )  # Blue for source atoms
+        for idx in target_index:
+            atom_colors[atom_mapping[idx.detach().item()]] = (
+                1.0,
+                0.0,
+                0.0,
+            )  # Red for target atoms
 
-    #     # Visualize the molecule
-    #     drawer = Draw.MolDraw2DCairo(500, 500)  # Create a 500x500 PNG canvas
-    #     drawer.DrawMolecule(
-    #         mol,
-    #         highlightAtoms=list(atom_colors.keys()),
-    #         highlightAtomColors=atom_colors,
-    #     )
-    #     drawer.FinishDrawing()
+        # Visualize the molecule
+        drawer = Draw.MolDraw2DCairo(500, 500)  # Create a 500x500 PNG canvas
+        drawer.DrawMolecule(
+            mol,
+            highlightAtoms=list(atom_colors.keys()),
+            highlightAtomColors=atom_colors,
+            highlightBonds=[],
+        )
+        drawer.FinishDrawing()
 
-    #     # Save the image to a file
-    #     with open(output_file, "wb") as f:
-    #         f.write(drawer.GetDrawingText())
+        # Save the image to a file
+        with open(output_file, "wb") as f:
+            f.write(drawer.GetDrawingText())
 
-    #     print(f"Molecule visualization saved to {output_file}")
-    #     return mol
+        print(f"Molecule visualization saved to {output_file}")
+        return mol

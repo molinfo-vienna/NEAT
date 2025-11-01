@@ -47,7 +47,7 @@ if __name__ == "__main__":
         CONFIG_FILE_PATH = args.config_file
         print(f"Using config file: {CONFIG_FILE_PATH}")
     else:
-        CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_evaluate.yaml")
+        CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_evaluation.yaml")
         print(f"Using default config file: {CONFIG_FILE_PATH}")
 
     params = yaml.load(
@@ -70,13 +70,21 @@ if __name__ == "__main__":
             f"Number of unique molecules: {n_unique} out of {n_valid} valid molecules ({n_unique/n_valid*100:.2f}%)\n"
         )
 
+    # Only plot the first 100 molecules for clarity
+    mols = mols[:100]
     img = Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules.png"))
 
+    mols_2d = []
     for mol in mols:
-        rdDepictor.Compute2DCoords(mol)
-        mol = RemoveHs(mol)
-    img = Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
+        if mol is None:
+            mols_2d.append(None)
+        else:
+            rdDepictor.Compute2DCoords(mol)
+            mol = RemoveHs(mol)
+            mols_2d.append(mol)
+
+    img = Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules_2d.png"))
 
     print(f"Saved generated molecules images to {os.path.join(params['data_path'])}.")
