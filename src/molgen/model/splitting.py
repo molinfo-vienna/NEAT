@@ -16,8 +16,6 @@ class SourceTargetSplitter:
     def create_source_target_split(self, data: Data, device=None):
         if self.splitting_mode == "random":
             return self.random_source_target_split(data, device=device)
-        elif self.splitting_mode == "mst":
-            return self.mst_source_target_split(data, device=device)
         elif self.splitting_mode == "cyclic":
             return self.cyclic_source_target_split(data, device=device)
         else:
@@ -188,136 +186,6 @@ class SourceTargetSplitter:
             stop_tokens,
         )
 
-    def mst_source_target_split(self, data: Data, device=None):
-        atom_counts = torch.bincount(data.batch)
-
-        # First we need to sample a random edge from each Minimum Spanning Tree (MST)
-        random_edges = self.sample_weighted_edge_from_mst(data)
-
-        # Now we can start from the target nodes and mark all reachable nodes in the MST
-        # print("Building adjacency list for MST...")
-        marked_nodes = random_edges[1]
-        source_set_idx = marked_nodes.clone()
-        while True:
-            visited_edges = torch.isin(data.edge_index_mst[0], marked_nodes)
-            if visited_edges.sum() == 0:
-                break
-            reachable_nodes = data.edge_index_mst[1][visited_edges]
-            source_set_idx = torch.cat((source_set_idx, reachable_nodes))
-            marked_nodes = reachable_nodes
-        source_set_idx = torch.unique(source_set_idx)
-        source_set_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
-        source_set_mask[source_set_idx] = 1
-
-        # Randomly decide to invert the source set with 50% probability
-        if torch.rand(1).item() < 0.5:
-            source_set_mask = ~source_set_mask
-            source_set_idx = torch.nonzero(source_set_mask, as_tuple=False).squeeze()
-
-        x_source = data.x[source_set_mask]
-        pos_source = data.pos[source_set_mask]
-        batch_source = data.batch[source_set_mask]
-
-        # Now we find all one-hop neighbours of the source set in the molecular graph
-        source_set_one_hop_edges_mask = torch.isin(data.edge_index[0], source_set_idx)
-        source_set_one_hop_idx = torch.unique(
-            data.edge_index[1][source_set_one_hop_edges_mask]
-        )
-        # We keep 1-hop neighbours that are not already in the source set in the target set
-        target_set_idx = torch.nonzero(~source_set_mask, as_tuple=False).squeeze()
-        target_set_neighbours_mask = torch.isin(source_set_one_hop_idx, target_set_idx)
-        target_set_idx = torch.unique(
-            source_set_one_hop_idx[target_set_neighbours_mask]
-        )
-        target_set_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
-        target_set_mask[target_set_idx] = 1
-        x_target = data.x[target_set_mask]
-        pos_target = data.pos[target_set_mask]
-        batch_target = data.batch[target_set_mask]
-
-        # Currently, I do not create stop tokens for MST splitting
-        # This should be introduced with some small probability
-        stop_tokens = atom_counts == 0
-
-        # data_point = data[0]
-        # target_idx = target_set_idx[target_set_idx < data_point.num_nodes]
-        # source_idx = source_set_idx[source_set_idx < data_point.num_nodes]
-        # self.create_rdkit_molecule(data_point, source_idx, target_idx)
-
-        def source_set_histogram(data, source_set_idx):
-            batch_source = data.batch[source_set_idx]
-            source_count = global_add_pool(torch.ones_like(batch_source), batch_source)
-            total_count = global_add_pool(torch.ones_like(data.batch), data.batch)
-            ratio = source_count / total_count
-            fig = plt.figure()
-            plt.hist(ratio.cpu().numpy(), bins=100, range=(0, 1))
-            plt.xlabel("Source set size ratio")
-            plt.ylabel("Number of molecules")
-            plt.title("Histogram of source set size ratios")
-            plt.savefig("source_set_histogram.png")
-
-        return (
-            x_source,
-            pos_source,
-            batch_source,
-            x_target,
-            pos_target,
-            batch_target,
-            stop_tokens,
-        )
-
-    def sample_weighted_edge_from_mst(self, batch):
-        """
-        Samples a single weighted random edge from the MST edge set (edge_index_mst) for each graph in a batch.
-        The sampling weight is halved for each step into a lower hierarchy.
-
-        Args:
-            batch (torch_geometric.data.Batch): A batch of PyG Data objects.
-
-        Returns:
-            torch.Tensor: A tensor containing one weighted random edge (2 nodes) for each graph in the batch.
-        """
-        # Get the batch-wise edge_index_mst, edge_attributes_mst, and batch information
-        device = batch.x.device
-        edge_index_mst = batch.edge_index_mst  # Shape: [2, num_edges]
-        edge_attributes_mst = batch.edge_attr_mst  # Shape: [num_edges]
-        batch_indices = batch.batch[edge_index_mst[0]]  # Batch indices for each edge
-
-        # Get the number of graphs in the batch
-        num_graphs = batch.num_graphs
-
-        # Find the number of edges per graph in the MST
-        edge_counts = torch.bincount(batch_indices)
-
-        # Compute weights for edges based on their hierarchical level
-        weights = 2 ** (-edge_attributes_mst.float())  # Shape: [num_edges]
-
-        # Normalize weights within each graph
-        normalized_weights = torch.zeros_like(weights, device=device)
-        for i in range(num_graphs):
-            graph_mask = batch_indices == i  # Mask for edges belonging to graph i
-            graph_weights = weights[graph_mask]
-            normalized_weights[graph_mask] = graph_weights / graph_weights.sum()
-
-        # Sample one edge per graph using the normalized weights
-        random_indices = torch.cat(
-            [
-                torch.multinomial(
-                    normalized_weights[batch_indices == i], 1, replacement=False
-                )
-                for i in range(num_graphs)
-            ]
-        )
-        offsets = torch.cat(
-            (torch.tensor([0], device=device), torch.cumsum(edge_counts, 0))
-        )[:-1]
-        random_indices += offsets
-
-        # Extract the random edges
-        random_edges = edge_index_mst[:, random_indices]
-
-        return random_edges
-
     def create_rdkit_molecule(
         self, data, source_index, target_index, output_file="molecule.png"
     ):
@@ -393,3 +261,135 @@ class SourceTargetSplitter:
 
         print(f"Molecule visualization saved to {output_file}")
         return mol
+
+    # # Deprecated MST splitting method
+
+    # def mst_source_target_split(self, data: Data, device=None):
+    #     atom_counts = torch.bincount(data.batch)
+
+    #     # First we need to sample a random edge from each Minimum Spanning Tree (MST)
+    #     random_edges = self.sample_weighted_edge_from_mst(data)
+
+    #     # Now we can start from the target nodes and mark all reachable nodes in the MST
+    #     # print("Building adjacency list for MST...")
+    #     marked_nodes = random_edges[1]
+    #     source_set_idx = marked_nodes.clone()
+    #     while True:
+    #         visited_edges = torch.isin(data.edge_index_mst[0], marked_nodes)
+    #         if visited_edges.sum() == 0:
+    #             break
+    #         reachable_nodes = data.edge_index_mst[1][visited_edges]
+    #         source_set_idx = torch.cat((source_set_idx, reachable_nodes))
+    #         marked_nodes = reachable_nodes
+    #     source_set_idx = torch.unique(source_set_idx)
+    #     source_set_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
+    #     source_set_mask[source_set_idx] = 1
+
+    #     # Randomly decide to invert the source set with 50% probability
+    #     if torch.rand(1).item() < 0.5:
+    #         source_set_mask = ~source_set_mask
+    #         source_set_idx = torch.nonzero(source_set_mask, as_tuple=False).squeeze()
+
+    #     x_source = data.x[source_set_mask]
+    #     pos_source = data.pos[source_set_mask]
+    #     batch_source = data.batch[source_set_mask]
+
+    #     # Now we find all one-hop neighbours of the source set in the molecular graph
+    #     source_set_one_hop_edges_mask = torch.isin(data.edge_index[0], source_set_idx)
+    #     source_set_one_hop_idx = torch.unique(
+    #         data.edge_index[1][source_set_one_hop_edges_mask]
+    #     )
+    #     # We keep 1-hop neighbours that are not already in the source set in the target set
+    #     target_set_idx = torch.nonzero(~source_set_mask, as_tuple=False).squeeze()
+    #     target_set_neighbours_mask = torch.isin(source_set_one_hop_idx, target_set_idx)
+    #     target_set_idx = torch.unique(
+    #         source_set_one_hop_idx[target_set_neighbours_mask]
+    #     )
+    #     target_set_mask = torch.zeros_like(data.batch, device=device, dtype=torch.bool)
+    #     target_set_mask[target_set_idx] = 1
+    #     x_target = data.x[target_set_mask]
+    #     pos_target = data.pos[target_set_mask]
+    #     batch_target = data.batch[target_set_mask]
+
+    #     # Currently, I do not create stop tokens for MST splitting
+    #     # This should be introduced with some small probability
+    #     stop_tokens = atom_counts == 0
+
+    #     # data_point = data[0]
+    #     # target_idx = target_set_idx[target_set_idx < data_point.num_nodes]
+    #     # source_idx = source_set_idx[source_set_idx < data_point.num_nodes]
+    #     # self.create_rdkit_molecule(data_point, source_idx, target_idx)
+
+    #     def source_set_histogram(data, source_set_idx):
+    #         batch_source = data.batch[source_set_idx]
+    #         source_count = global_add_pool(torch.ones_like(batch_source), batch_source)
+    #         total_count = global_add_pool(torch.ones_like(data.batch), data.batch)
+    #         ratio = source_count / total_count
+    #         fig = plt.figure()
+    #         plt.hist(ratio.cpu().numpy(), bins=100, range=(0, 1))
+    #         plt.xlabel("Source set size ratio")
+    #         plt.ylabel("Number of molecules")
+    #         plt.title("Histogram of source set size ratios")
+    #         plt.savefig("source_set_histogram.png")
+
+    #     return (
+    #         x_source,
+    #         pos_source,
+    #         batch_source,
+    #         x_target,
+    #         pos_target,
+    #         batch_target,
+    #         stop_tokens,
+    #     )
+
+    # def sample_weighted_edge_from_mst(self, batch):
+    #     """
+    #     Samples a single weighted random edge from the MST edge set (edge_index_mst) for each graph in a batch.
+    #     The sampling weight is halved for each step into a lower hierarchy.
+
+    #     Args:
+    #         batch (torch_geometric.data.Batch): A batch of PyG Data objects.
+
+    #     Returns:
+    #         torch.Tensor: A tensor containing one weighted random edge (2 nodes) for each graph in the batch.
+    #     """
+    #     # Get the batch-wise edge_index_mst, edge_attributes_mst, and batch information
+    #     device = batch.x.device
+    #     edge_index_mst = batch.edge_index_mst  # Shape: [2, num_edges]
+    #     edge_attributes_mst = batch.edge_attr_mst  # Shape: [num_edges]
+    #     batch_indices = batch.batch[edge_index_mst[0]]  # Batch indices for each edge
+
+    #     # Get the number of graphs in the batch
+    #     num_graphs = batch.num_graphs
+
+    #     # Find the number of edges per graph in the MST
+    #     edge_counts = torch.bincount(batch_indices)
+
+    #     # Compute weights for edges based on their hierarchical level
+    #     weights = 2 ** (-edge_attributes_mst.float())  # Shape: [num_edges]
+
+    #     # Normalize weights within each graph
+    #     normalized_weights = torch.zeros_like(weights, device=device)
+    #     for i in range(num_graphs):
+    #         graph_mask = batch_indices == i  # Mask for edges belonging to graph i
+    #         graph_weights = weights[graph_mask]
+    #         normalized_weights[graph_mask] = graph_weights / graph_weights.sum()
+
+    #     # Sample one edge per graph using the normalized weights
+    #     random_indices = torch.cat(
+    #         [
+    #             torch.multinomial(
+    #                 normalized_weights[batch_indices == i], 1, replacement=False
+    #             )
+    #             for i in range(num_graphs)
+    #         ]
+    #     )
+    #     offsets = torch.cat(
+    #         (torch.tensor([0], device=device), torch.cumsum(edge_counts, 0))
+    #     )[:-1]
+    #     random_indices += offsets
+
+    #     # Extract the random edges
+    #     random_edges = edge_index_mst[:, random_indices]
+
+    #     return random_edges

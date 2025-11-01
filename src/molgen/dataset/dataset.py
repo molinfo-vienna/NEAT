@@ -107,7 +107,9 @@ class DataSet(InMemoryDataset):
     def process(self):
         raw_path = self.raw_paths[0]
         vocab_path = os.path.join(
-            os.path.dirname(os.path.dirname(self.root)), "scripts", "qm9_small_vocab.yaml"
+            os.path.dirname(os.path.dirname(self.root)),
+            "scripts",
+            "qm9_small_vocab.yaml",
         )
         try:
             with open(vocab_path, "r") as file:
@@ -229,29 +231,29 @@ class DataSet(InMemoryDataset):
             for i, j in edge_index.t().tolist():
                 G.add_edge(i, j)
 
-            mst = nx.minimum_spanning_tree(G)  # Compute MST using NetworkX
-            edge_index_mst = (
-                torch.tensor(list(mst.edges), dtype=torch.long).t().contiguous()
-            )
-
-            # Also store the tree depth in the data object
-            root_node = list(mst.nodes)[0]
-            depths = nx.single_source_shortest_path_length(mst, root_node)
-
-            # Compute edge hierarchy levels
-            edge_hierarchy = []
-            for i, j in mst.edges:
-                # The hierarchical level of the edge is the maximum depth of its two nodes
-                edge_hierarchy.append(max(depths[i], depths[j]))
-
-            edge_hierarchy = torch.tensor(edge_hierarchy, dtype=torch.long)
-            diameter = nx.diameter(mst)
-
             # Compute eccentricities for all nodes
             eccentricities = nx.eccentricity(G)  # Dictionary {node: eccentricity}
             eccentricity_tensor = torch.tensor(
                 [eccentricities[node] for node in range(len(G.nodes))], dtype=torch.long
             )
+
+            # mst = nx.minimum_spanning_tree(G)  # Compute MST using NetworkX
+            # edge_index_mst = (
+            #     torch.tensor(list(mst.edges), dtype=torch.long).t().contiguous()
+            # )
+
+            # # Also store the tree depth in the data object
+            # root_node = list(mst.nodes)[0]
+            # depths = nx.single_source_shortest_path_length(mst, root_node)
+
+            # # Compute edge hierarchy levels
+            # edge_hierarchy = []
+            # for i, j in mst.edges:
+            #     # The hierarchical level of the edge is the maximum depth of its two nodes
+            #     edge_hierarchy.append(max(depths[i], depths[j]))
+
+            # edge_hierarchy = torch.tensor(edge_hierarchy, dtype=torch.long)
+            # diameter = nx.diameter(mst)
 
             # Create PyG Data object
             data = Data(
@@ -259,9 +261,9 @@ class DataSet(InMemoryDataset):
                 pos=pos,
                 edge_index=edge_index,
                 edge_attr=edge_attr,
-                edge_index_mst=edge_index_mst,
-                edge_attr_mst=edge_hierarchy,
-                diameter=diameter,
+                # edge_index_mst=edge_index_mst,
+                # edge_attr_mst=edge_hierarchy,
+                # diameter=diameter,
                 eccentricity=eccentricity_tensor,
             )
 

@@ -12,7 +12,7 @@ from torch_geometric.data import Data
 from torch_geometric.nn.models import MLP
 from torch_geometric.nn.pool import global_mean_pool
 
-from .attention import AttentionPooling, Block, LayerNorm
+from .attention import Block, LayerNorm
 from .augmentation import RandomRotationAugmentation
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
 from .simple_mlp import SimpleMLPAdaLN
@@ -61,21 +61,6 @@ class MolGen(LightningModule):
             ]
         )
         self.output_layer_norm = LayerNorm(self.hparams.n_embd, bias=self.hparams.bias)
-
-        # Attention pooling layer if specified
-        if self.hparams.pooling == "attention" or self.hparams.pooling == "combined":
-            self.attention_pooling = AttentionPooling(
-                n_embd=self.hparams.n_embd,
-                n_head=self.hparams.n_head,
-                dropout=self.hparams.dropout,
-                bias=self.hparams.bias,
-            )
-
-        # Linear layer to map the final embeddings to atom vocabulary logits
-        if self.hparams.pooling == "combined":
-            self.aggregation_map = torch.nn.Linear(
-                2 * self.hparams.n_embd, self.hparams.n_embd, bias=False
-            )
 
         self.linear_output_head = torch.nn.Linear(
             self.hparams.n_embd, self.hparams.vocab_size, bias=False
@@ -277,22 +262,8 @@ class MolGen(LightningModule):
         x = x * atom_mask.unsqueeze(-1)  # [n_molecules, max_atom_count, n_embd]
 
         # Now we can pool the atom embeddings by summation along the max_atom_count dimension
-        # TODO: Investigate how attention pooling works here.
-
         if self.hparams.pooling == "add":
             source_set_representation = x.sum(dim=1)  # [n_molecules, n_embd]
-        elif self.hparams.pooling == "attention":
-            source_set_representation = self.attention_pooling(x)
-        elif self.hparams.pooling == "combined":
-            sum_pooling = x.sum(dim=1)  # [n_molecules, n_embd]
-            attention_pooling = self.attention_pooling(x)  # [n_molecules, n_embd]
-            source_set_representation = torch.cat(
-                (sum_pooling, attention_pooling), dim=-1
-            )  # [n_molecules, 2*n_embd]
-            source_set_representation = self.aggregation_map(
-                source_set_representation
-            )  # [n_molecules, n_embd]
-
         else:
             raise ValueError(f"Unknown pooling method: {self.hparams.pooling}")
         return source_set_representation
@@ -651,7 +622,9 @@ class MolGen(LightningModule):
         device: torch.device = torch.device("cuda"),
     ):
         # Initialize starting atom type with all carbon atoms
-        x = torch.ones(size=(batch_size,), dtype=torch.long, device=device) * 2  # 2 for carbon
+        x = (
+            torch.ones(size=(batch_size,), dtype=torch.long, device=device) * 2
+        )  # 2 for carbon
         # Initialize starting position with a random one
         pos = torch.randn(batch_size, 3, device=device)
         # Initialize the batch source tensor
