@@ -23,7 +23,6 @@ from .utils import create_time_embeddings, pad_and_mask_sequences
 class MolGen(LightningModule):
     def __init__(self, **params) -> None:
         super(MolGen, self).__init__()
-        self.save_hyperparameters()
         # This will be handy when we introduce more hyper parameters
         self.hparams.setdefault("pooling", "add")
         self.hparams.setdefault("fm_conditioning", "add")
@@ -31,6 +30,7 @@ class MolGen(LightningModule):
         self.hparams.setdefault("time_step_resampling", 4)
         self.hparams.setdefault("source_target_split", "cyclic")
         self.hparams.setdefault("optimal_transport", False)
+        self.save_hyperparameters()
 
         # Atom type embedding layer
         self.atom_type_embedding = torch.nn.Embedding(

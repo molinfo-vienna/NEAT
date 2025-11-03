@@ -10,6 +10,7 @@ from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 
 from molgen.dataset import DataModule
 from molgen.model import GenerationMonitor, MolGen
+from molgen.model.utils import load_model_from_path
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -51,7 +52,7 @@ def training(args: argparse.Namespace) -> None:
 
     # Initialize and train model
     model = MODEL(**params)
-    # MODEL_NUMBER = 0
+    # MODEL_NUMBER = 63
     # MODEL_PATH = f"{ROOT}/logs/{MODEL.__name__}/version_{MODEL_NUMBER}/"
     # model = load_model_from_path(MODEL_PATH, MODEL)
     tb_logger = TensorBoardLogger(

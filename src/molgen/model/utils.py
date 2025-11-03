@@ -1,3 +1,6 @@
+import os
+
+from lightning import LightningModule
 import torch
 
 
@@ -99,3 +102,25 @@ def create_time_embeddings(timesteps, embedding_dim):
     )  # Shape: (n, embedding_dim)
 
     return time_embeddings
+
+
+def load_model_from_path(
+    folder_path: str, model_class: LightningModule, device: int = 0
+) -> LightningModule:
+    """Load the model from the checkpoint path."""
+    if not os.path.exists(folder_path):
+        return None
+    else:
+        folder_path = os.path.join(folder_path, "checkpoints")
+
+    model_path = None
+    for file in os.listdir(folder_path):
+        if file.endswith(".ckpt"):
+            model_path = os.path.join(folder_path, file)
+
+    if model_path:
+        return model_class.load_from_checkpoint(
+            model_path, map_location=torch.device("cpu")
+        )
+    else:
+        return None
