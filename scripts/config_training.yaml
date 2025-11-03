@@ -1,4 +1,5 @@
 accumulate_grad_batches: 1
+attention_radius: 3.0
 batch_size: 2048
 bias: true
 block_size: 512
@@ -6,7 +7,7 @@ data_set: QM9_small_vocab
 data_split: edm_split
 dropout: 0.1
 fm_conditioning: ada
-learning_rate: 0.0001
+learning_rate: 1.e-4
 max_epochs: 10000
 n_embd: 720
 n_embd_fm: 1440

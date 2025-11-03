@@ -10,7 +10,9 @@ from torch.nn.functional import one_hot
 from torch.optim import Optimizer
 from torch_geometric.data import Data
 from torch_geometric.nn.models import MLP
-from torch_geometric.nn.pool import global_mean_pool, global_add_pool
+from torch_geometric.nn.pool import global_mean_pool, global_add_pool, radius_graph
+from torch_geometric.utils import to_dense_adj
+
 
 from .attention import Block, LayerNorm
 from .augmentation import RandomRotationAugmentation
@@ -30,6 +32,7 @@ class MolGen(LightningModule):
         self.hparams.setdefault("time_step_resampling", 4)
         self.hparams.setdefault("source_target_split", "cyclic")
         self.hparams.setdefault("optimal_transport", False)
+        self.hparams.setdefault("attention_radius", None)
         self.save_hyperparameters()
 
         # Atom type embedding layer
@@ -238,9 +241,22 @@ class MolGen(LightningModule):
             x, batch_source
         )  # [n_molecules, max_atom_count, n_embd], [n_molecules, max_atom_count]
 
+        # Create the right mask dimensions
         # The attention mask corresponds to the atom mask, but needs to be broadcasted
         # to the number of attention heads.
 
+        # Optionally, we want to mask out attention between atoms that are too far apart.
+        if self.hparams.attention_radius is not None:
+            radius_edges = radius_graph(
+                pos_source,
+                r=self.hparams.attention_radius,
+                batch=batch_source,
+                max_num_neighbors=32,
+            )
+            attn_mask = to_dense_adj(edge_index=radius_edges, batch=batch_source)
+        else:
+            attn_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
+        attn_mask = attn_mask.unsqueeze(1).expand(-1, self.hparams.n_head, -1, -1)
         # The positions need to be padded in the same way as the atom embeddings.
         # This will be needed for applying the rotary positional embeddings in the
         # transformer blocks.
@@ -251,7 +267,7 @@ class MolGen(LightningModule):
         # Pass through transformer blocks
         for block in self.transformer_blocks:
             x = block(
-                x, attn_mask=atom_mask, pos=pos
+                x, attn_mask=attn_mask, pos=pos
             )  # [n_molecules, max_atom_count, n_embd]
         x = self.output_layer_norm(x)  # [n_molecules, max_atom_count, n_embd]
 

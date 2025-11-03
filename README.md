@@ -10,7 +10,7 @@ mamba activate molgen
 Install the GPU version of pytorch
 
 ```bash
-pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu128
+pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
 ```
 Install the rest
 

@@ -57,10 +57,6 @@ class MaskedBidirectionalAttention(nn.Module):
             1, 2
         )  # (B, nh, T, hs)
 
-        # Create the right mask dimensions
-        attn_mask = attn_mask.unsqueeze(1) * attn_mask.unsqueeze(2)
-        attn_mask = attn_mask.unsqueeze(1).expand(-1, self.n_head, -1, -1)
-
         if self.pos_embedder and pos is not None:
             q, k = self.pos_embedder(q, k, pos)
 
