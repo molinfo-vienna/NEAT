@@ -11,6 +11,7 @@ Install the GPU version of pytorch
 
 ```bash
 pip install torch==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+pip install torch_cluster -f https://data.pyg.org/whl/torch-2.8.0+cu128.html
 ```
 Install the rest
 
