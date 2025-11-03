@@ -2,6 +2,7 @@ import argparse
 import os
 
 import yaml
+import rdkit
 from rdkit.Chem import Draw, MolToSmiles, RemoveHs, rdDepictor
 
 from molgen.model.molecule_builder import MoleculeBuilder
@@ -87,4 +88,6 @@ if __name__ == "__main__":
     img = Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules_2d.png"))
 
+    print(f"RDKit version: {rdkit.__version__}")
+    print(f"Data set: {params['data_set']}")
     print(f"Saved generated molecules images to {os.path.join(params['data_path'])}.")

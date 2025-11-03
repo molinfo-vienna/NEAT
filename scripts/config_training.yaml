@@ -13,9 +13,10 @@ n_embd_fm: 1440
 n_head: 12
 n_layer: 12
 n_layers_fm: 6
+optimal_transport: true
 pooling: add
 source_target_split: cyclic
-time_step_resampling: 1
+time_step_resampling: 4
 time_step_sampling: logit_normal
 vocab_size: 6
 weight_decay: 1.0e-06

@@ -6,7 +6,7 @@ from rdkit.Chem import Mol, MolFromXYZBlock, rdDetermineBonds
 
 
 class MoleculeBuilder:
-    def __init__(self, small_vocab_size: bool=True):
+    def __init__(self, small_vocab_size: bool = True):
         super().__init__()
         if small_vocab_size:
             self.atom_type_to_element = {
