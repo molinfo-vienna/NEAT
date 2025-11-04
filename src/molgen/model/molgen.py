@@ -252,6 +252,7 @@ class MolGen(LightningModule):
                 r=self.hparams.attention_radius,
                 batch=batch_source,
                 max_num_neighbors=32,
+                loop=True
             )
             attn_mask = to_dense_adj(edge_index=radius_edges, batch=batch_source)
         else:
