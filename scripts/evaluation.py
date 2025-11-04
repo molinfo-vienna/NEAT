@@ -1,11 +1,17 @@
 import argparse
 import os
 
+import py3Dmol
 import yaml
 import rdkit
-from rdkit.Chem import Draw, MolToSmiles, RemoveHs, rdDepictor
+from rdkit.Chem import Draw, MolToSmiles, rdDepictor
+from rdkit.Chem.AllChem import RemoveHs
 
 from molgen.model.molecule_builder import MoleculeBuilder
+
+RESOLUTION = 400
+NUM_MOLECULES_PLOTTED = 100
+NUM_MOLECULES_PER_ROW = 5
 
 
 def compute_validity(mols):
@@ -68,12 +74,14 @@ if __name__ == "__main__":
             f"Number of valid molecules: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)\n"
         )
         f.write(
-            f"Number of unique molecules: {n_unique} out of {n_valid} valid molecules ({n_unique/n_valid*100:.2f}%)\n"
+            f"Number of valid x unique molecules: {n_valid} out of {len(mols)} ({n_unique/len(mols)*100:.2f}%)\n"
         )
+        f.write(f"Data set: {params['data_set']}\n")
+        f.write(f"RDKit version: {rdkit.__version__}\n")
 
-    # Only plot the first 100 molecules for clarity
-    mols = mols[:100]
-    img = Draw.MolsToGridImage(mols, molsPerRow=5, subImgSize=(400, 400))
+    # Only plot the first N molecules for clarity
+    mols = mols[:NUM_MOLECULES_PLOTTED]
+    img = Draw.MolsToGridImage(mols, molsPerRow=NUM_MOLECULES_PER_ROW, subImgSize=(RESOLUTION, RESOLUTION))
     img.save(os.path.join(params["data_path"], "generated_molecules.png"))
 
     mols_2d = []
@@ -88,6 +96,34 @@ if __name__ == "__main__":
     img = Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
     img.save(os.path.join(params["data_path"], "generated_molecules_2d.png"))
 
-    print(f"RDKit version: {rdkit.__version__}")
-    print(f"Data set: {params['data_set']}")
     print(f"Saved generated molecules images to {os.path.join(params['data_path'])}.")
+
+    view = py3Dmol.view(
+        width=NUM_MOLECULES_PER_ROW * RESOLUTION, 
+        height=NUM_MOLECULES_PLOTTED * RESOLUTION, 
+        viewergrid=(NUM_MOLECULES_PLOTTED, NUM_MOLECULES_PER_ROW)
+        )
+
+    for i in range(NUM_MOLECULES_PLOTTED):
+        row = i // NUM_MOLECULES_PER_ROW
+        col = i % NUM_MOLECULES_PER_ROW
+
+        # Get the atom types and positions for the current molecule
+        x_sub = x[batch == i]
+        pos_sub = pos[batch == i]
+
+        # Convert atom types and positions to XYZ format
+        xyz = builder.create_xyz_block(x_sub, pos_sub)
+
+        # Add the molecule to the py3Dmol viewer
+        view.addModel(xyz, "xyz", viewer=(row, col))
+        view.setStyle({"model": -1}, {"stick": {"radius": 0.2}, "sphere": {"scale": 0.3}}, viewer=(row, col))
+
+    view.zoomTo()
+    view.show()
+
+    with open(os.path.join(params["data_path"], "generated_molecules_3d.html"), "w") as f:
+        f.write(view._make_html())
+
+    print(f"Saved 3D visualization to {os.path.join(params['data_path'], 'generated_molecules_3d.html')}")
+

@@ -2,7 +2,7 @@ import logging
 import os
 
 import torch
-from rdkit.Chem import Mol, MolFromXYZBlock, rdDetermineBonds
+from rdkit.Chem import MolFromXYZBlock, rdDetermineBonds
 
 
 class MoleculeBuilder:
