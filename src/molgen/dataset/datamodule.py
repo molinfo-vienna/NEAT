@@ -1,8 +1,63 @@
 import torch
 from lightning import LightningDataModule
-from torch_geometric.loader import DataLoader
+from torch.utils.data import DataLoader
+from torch_geometric.data import Batch
+
+from ..model.splitting import SourceTargetSplitter
+from ..model.utils import pad_and_mask_sequences
+from torch.nn.functional import one_hot
+from torch_geometric.nn.pool import global_mean_pool
+
 
 from .dataset import DataSet
+
+
+def batch_transform(batch):
+    # Apply your batch-level augmentation logic here
+    # For example, add random noise to all node features in the batch
+    splitter = SourceTargetSplitter(splitting_mode="cyclic_heavy")
+    splitter2 = SourceTargetSplitter(splitting_mode="hydrogen_random")
+    # TODO: Make sure this sampling procedure really does what we want.
+    (
+        x_source,  # [n_source_atoms]
+        pos_source,  # [n_source_atoms, 3]
+        batch_source,  # [n_source_atoms]
+        atom_count_source,
+        x_target,  # [n_target_atoms]
+        pos_target,  # [n_target_atoms, 3]
+        batch_target,  # [n_target_atoms]
+        stop_tokens,  # [n_molecules]
+    ) = splitter.create_source_target_split(batch)
+
+    # TODO: Make sure this sampling procedure really does what we want.
+    (
+        x_source2,  # [n_source_atoms]
+        pos_source2,  # [n_source_atoms, 3]
+        batch_source2,  # [n_source_atoms]
+        atom_count_source2,
+        x_target2,  # [n_target_atoms]
+        pos_target2,  # [n_target_atoms, 3]
+        batch_target2,  # [n_target_atoms]
+        stop_tokens2,  # [n_molecules]
+    ) = splitter2.create_source_target_split(batch)
+
+    batch_target2 = batch_target2 + batch_target.max() + 1
+    batch.x_source = torch.cat([x_source, x_source2], dim=0)
+    batch.pos_source = torch.cat([pos_source, pos_source2], dim=0)
+    batch.batch_source = torch.cat([batch_source, batch_source2], dim=0)
+    batch.atom_count_source = torch.cat([atom_count_source, atom_count_source2], dim=0)
+    batch.x_target = torch.cat([x_target, x_target2], dim=0)
+    batch.pos_target = torch.cat([pos_target, pos_target2], dim=0)
+    batch.batch_target = torch.cat([batch_target, batch_target2], dim=0)
+    batch.stop_tokens = torch.cat([stop_tokens, stop_tokens2], dim=0)
+
+    return batch
+
+
+# Create a custom DataLoader with a batch-level transform
+def custom_collate_fn(batch):
+    batch = Batch.from_data_list(batch)  # Collate individual samples into a batch
+    return batch_transform(batch)  # Apply the batch-level transform
 
 
 class DataModule(LightningDataModule):
@@ -60,6 +115,7 @@ class DataModule(LightningDataModule):
                 drop_last=True,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
         else:
             return DataLoader(
@@ -69,6 +125,7 @@ class DataModule(LightningDataModule):
                 drop_last=True,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
 
     def val_dataloader(self) -> DataLoader:
@@ -77,18 +134,20 @@ class DataModule(LightningDataModule):
                 self.validation_data,
                 batch_size=len(self.validation_data),
                 shuffle=False,
-                drop_last=False,
+                drop_last=True,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
         else:
             return DataLoader(
                 self.validation_data,
                 batch_size=self.batch_size,
                 shuffle=False,
-                drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                drop_last=True,
+                collate_fn=custom_collate_fn,
             )
 
     def test_dataloader(self) -> DataLoader:
@@ -100,6 +159,7 @@ class DataModule(LightningDataModule):
                 drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
         else:
             return DataLoader(
@@ -109,6 +169,7 @@ class DataModule(LightningDataModule):
                 drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
 
     def full_dataloader(self) -> DataLoader:
@@ -120,6 +181,7 @@ class DataModule(LightningDataModule):
                 drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
         else:
             return DataLoader(
@@ -129,4 +191,5 @@ class DataModule(LightningDataModule):
                 drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )

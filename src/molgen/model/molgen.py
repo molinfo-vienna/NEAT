@@ -13,7 +13,6 @@ from torch_geometric.nn.models import MLP
 from torch_geometric.nn.pool import global_mean_pool, global_add_pool, radius_graph
 from torch_geometric.utils import to_dense_adj
 
-
 from .attention import Block, LayerNorm
 from .augmentation import RandomRotationAugmentation
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
@@ -56,10 +55,10 @@ class MolGen(LightningModule):
                     self.hparams.n_head,
                     self.hparams.dropout,
                     self.hparams.bias,
-                    AxialRotaryPositionEncoding(
-                        embed_dim=self.hparams.n_embd,
-                        num_heads=self.hparams.n_head,
-                    ),
+                    # AxialRotaryPositionEncoding(
+                    #     embed_dim=self.hparams.n_embd,
+                    #     num_heads=self.hparams.n_head,
+                    # ),
                 )
                 for _ in range(self.hparams.n_layer)
             ]
@@ -169,19 +168,27 @@ class MolGen(LightningModule):
         # If it contains all atoms, then the target set will be empty.
         # The stop tokens mask indicates which molecules have empty target sets.
         # TODO: Make sure this sampling procedure really does what we want.
-        (
-            x_source,  # [n_source_atoms]
-            pos_source,  # [n_source_atoms, 3]
-            batch_source,  # [n_source_atoms]
-            x_target,  # [n_target_atoms]
-            pos_target,  # [n_target_atoms, 3]
-            batch_target,  # [n_target_atoms]
-            stop_tokens,  # [n_molecules]
-        ) = self.splitter.create_source_target_split(data, device=device)
+        # (
+        #     x_source,  # [n_source_atoms]
+        #     pos_source,  # [n_source_atoms, 3]
+        #     batch_source,  # [n_source_atoms]
+        #     x_target,  # [n_target_atoms]
+        #     pos_target,  # [n_target_atoms, 3]
+        #     batch_target,  # [n_target_atoms]
+        #     stop_tokens,  # [n_molecules]
+        # ) = self.splitter.create_source_target_split(data, device=device)
+
+        x_source = data.x_source
+        pos_source = data.pos_source
+        atom_count_source = data.atom_count_source
+        x_target = data.x_target
+        pos_target = data.pos_target
+        batch_target = data.batch_target
+        stop_tokens = data.stop_tokens
 
         # Now we compute the representation of the source atom sets with the transformer
         source_set_representation = self.compute_source_set_representation(
-            x_source, pos_source, batch_source, device
+            x_source, pos_source, atom_count_source, device
         )  # [n_molecules, n_embd]
 
         # From this representation, we can calculate a cross-entropy loss for atom type
@@ -215,60 +222,66 @@ class MolGen(LightningModule):
         return loss, loss_ce, loss_fm
 
     def compute_source_set_representation(
-        self, x_source, pos_source, batch_source, device
+        self, x_source, pos_source, atom_count_source, device
     ):
         x_source = x_source.to(device)
         pos_source = pos_source.to(device)
-        batch_source = batch_source.to(device)
-
+        dim = [len(atom_count_source), atom_count_source.max(), self.hparams.n_embd]
+        context_range = torch.arange(
+            atom_count_source.max(), device=atom_count_source.device
+        ).unsqueeze(0)
+        atom_mask = context_range < atom_count_source.unsqueeze(1)
         # Embedding layers for atom types and positions
-        atom_type_embeddings = self.atom_type_embedding(
+        x = torch.zeros(dim, device=device)
+        atom_type_embedding = self.atom_type_embedding(
             x_source
         )  # [n_source_atoms, n_embd]
-        fourier_positional_embeddings = self.fourier_embedding_layer(
+        positional_embedding = self.fourier_embedding_layer(
             pos_source
         )  # [n_source_atoms, n_embd]
-        x = self.dropout_layer(
-            atom_type_embeddings + fourier_positional_embeddings
+        x[atom_mask] = self.dropout_layer(
+            atom_type_embedding + positional_embedding
         )  # [n_source_atoms, n_embd]
+        attn_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
+        attn_mask = attn_mask.unsqueeze(1).expand(-1, self.hparams.n_head, -1, -1)
 
         # Here we need to reshape the input to [batch_size, max_atom_count, n_embd].
         # This could also be done with sequence packing, but for now we keep it simple.
         # The output tensor is padded with zeros for all source sets with less atoms
         # than the largest source atom set in the batch. The atom mask keeps track of
         # which entries correspond to atoms and padding.
-        x, atom_mask = pad_and_mask_sequences(
-            x, batch_source
-        )  # [n_molecules, max_atom_count, n_embd], [n_molecules, max_atom_count]
+        # x, atom_mask = pad_and_mask_sequences(
+        #     x, batch_source
+        # )  # [n_molecules, max_atom_count, n_embd], [n_molecules, max_atom_count]
 
         # Create the right mask dimensions
         # The attention mask corresponds to the atom mask, but needs to be broadcasted
         # to the number of attention heads.
 
         # Optionally, we want to mask out attention between atoms that are too far apart.
-        if self.hparams.attention_radius is not None:
-            radius_edges = radius_graph(
-                pos_source,
-                r=self.hparams.attention_radius,
-                batch=batch_source,
-                max_num_neighbors=32,
-                loop=True
-            )
-            attn_mask = to_dense_adj(edge_index=radius_edges, batch=batch_source)
-        else:
-            attn_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
-        attn_mask = attn_mask.unsqueeze(1).expand(-1, self.hparams.n_head, -1, -1)
+        # if self.hparams.attention_radius is not None:
+        #     radius_edges = radius_graph(
+        #         pos_source,
+        #         r=self.hparams.attention_radius,
+        #         batch=batch_source,
+        #         max_num_neighbors=32,
+        #         loop=True,
+        #     )
+        #     attn_mask = to_dense_adj(edge_index=radius_edges, batch=batch_source)
+        # else:
+        #     attn_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
+        # attn_mask = attn_mask.unsqueeze(1).expand(-1, self.hparams.n_head, -1, -1)
         # The positions need to be padded in the same way as the atom embeddings.
         # This will be needed for applying the rotary positional embeddings in the
         # transformer blocks.
-        pos, _ = pad_and_mask_sequences(
-            pos_source, batch_source
-        )  # [n_molecules, max_atom_count, 3]
+        # pos, _ = pad_and_mask_sequences(
+        #     pos_source, batch_source
+        # )  # [n_molecules, max_atom_count, 3]
 
         # Pass through transformer blocks
         for block in self.transformer_blocks:
             x = block(
-                x, attn_mask=attn_mask, pos=pos
+                x, attn_mask=attn_mask, pos=pos_source
             )  # [n_molecules, max_atom_count, n_embd]
         x = self.output_layer_norm(x)  # [n_molecules, max_atom_count, n_embd]
 
@@ -585,7 +598,7 @@ class MolGen(LightningModule):
             optim_groups,
             lr=self.hparams.learning_rate,
             betas=betas,
-            fused=True,
+            # fused=True,
         )
 
         # Define the warmup scheduler
@@ -714,8 +727,9 @@ class MolGen(LightningModule):
             _, batch_source_remapped = torch.unique(
                 masked_batch_source.clone(), return_inverse=True
             )
+            atom_count = torch.bincount(batch_source_remapped)
             source_set_representation = self.compute_source_set_representation(
-                masked_x, masked_pos, batch_source_remapped, device
+                masked_x, masked_pos, atom_count, device
             )  # [active_mol_count, n_embd]
             # Compute logits
             logits = self.linear_output_head(
