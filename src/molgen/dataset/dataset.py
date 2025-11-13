@@ -162,9 +162,14 @@ class DataSet(InMemoryDataset):
         try:
             # Some molecules contain multiple fragements, here we pic the largest one
             frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
-            mol = max(frags, key=lambda frag: frag.GetNumAtoms())
+
+            if len(frags) > 1:
+                sanitized = False
+                mol = max(frags, key=lambda frag: frag.GetNumAtoms())
+            else:
+                sanitized = True
             # mol = Chem.AddHs(mol)
-            mol, sanitized = DataSet.try_sanitize_molecule(mol)
+            # mol, sanitized = DataSet.try_sanitize_molecule(mol)
 
             # Define a mapping for hybridization states to integers
             hybridization_mapping = {

@@ -1,8 +1,48 @@
 import torch
 from lightning import LightningDataModule
-from torch_geometric.loader import DataLoader
+from torch.utils.data import DataLoader
+from torch_geometric.data import Batch
 
 from .dataset import DataSet
+from ..model.splitting import SourceTargetSplitter
+from ..model.augmentation import RandomRotationAugmentation
+
+
+def batch_transform(batch):
+    # Apply your batch-level augmentation logic here
+    # For example, add random noise to all node features in the batch
+    # data augmentation by random rotation
+    rotation_augmentation = RandomRotationAugmentation()
+    batch.pos = rotation_augmentation.rotate_graphs_randomly(batch.pos, batch.batch)
+    splitter = SourceTargetSplitter(splitting_mode="cyclic")
+
+    (
+        x_source,  # [n_source_atoms]
+        pos_source,  # [n_source_atoms, 3]
+        batch_source,  # [n_source_atoms]
+        atom_count_source,
+        x_target,  # [n_target_atoms]
+        pos_target,  # [n_target_atoms, 3]
+        batch_target,  # [n_target_atoms]
+        stop_tokens,  # [n_molecules]
+    ) = splitter.create_source_target_split(batch)
+
+    batch.x_source = x_source
+    batch.pos_source = pos_source
+    batch.batch_source = batch_source
+    batch.atom_count_source = atom_count_source
+    batch.x_target = x_target
+    batch.pos_target = pos_target
+    batch.batch_target = batch_target
+    batch.stop_tokens = stop_tokens
+
+    return batch
+
+
+# Create a custom DataLoader with a batch-level transform
+def custom_collate_fn(batch):
+    batch = Batch.from_data_list(batch)  # Collate individual samples into a batch
+    return batch_transform(batch)  # Apply the batch-level transform
 
 
 class DataModule(LightningDataModule):
@@ -60,6 +100,7 @@ class DataModule(LightningDataModule):
                 drop_last=True,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
         else:
             return DataLoader(
@@ -69,6 +110,7 @@ class DataModule(LightningDataModule):
                 drop_last=True,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
 
     def val_dataloader(self) -> DataLoader:
@@ -77,18 +119,20 @@ class DataModule(LightningDataModule):
                 self.validation_data,
                 batch_size=len(self.validation_data),
                 shuffle=False,
-                drop_last=False,
+                drop_last=True,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
         else:
             return DataLoader(
                 self.validation_data,
                 batch_size=self.batch_size,
                 shuffle=False,
-                drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                drop_last=True,
+                collate_fn=custom_collate_fn,
             )
 
     def test_dataloader(self) -> DataLoader:
@@ -100,6 +144,7 @@ class DataModule(LightningDataModule):
                 drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
         else:
             return DataLoader(
@@ -109,6 +154,7 @@ class DataModule(LightningDataModule):
                 drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
 
     def full_dataloader(self) -> DataLoader:
@@ -120,6 +166,7 @@ class DataModule(LightningDataModule):
                 drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
         else:
             return DataLoader(
@@ -129,4 +176,5 @@ class DataModule(LightningDataModule):
                 drop_last=False,
                 num_workers=self.num_workers,
                 persistent_workers=True,
+                collate_fn=custom_collate_fn,
             )
