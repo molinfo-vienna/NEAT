@@ -5,7 +5,7 @@ import torch
 import torch_geometric
 import yaml
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint
+from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 
 from molgen.dataset import DataModule
@@ -52,23 +52,40 @@ def training(args: argparse.Namespace) -> None:
 
     # Initialize and train model
     model = MODEL(**params)
-    # MODEL_NUMBER = 63
+    # MODEL_NUMBER = 87
     # MODEL_PATH = f"{ROOT}/logs/{MODEL.__name__}/version_{MODEL_NUMBER}/"
     # model = load_model_from_path(MODEL_PATH, MODEL)
+    # model.hparams.learning_rate = 1e-5
+    # model.configure_optimizers()
     tb_logger = TensorBoardLogger(
         os.path.join(ROOT, "logs"),
         # "/data/local/MolGen",
         name=f"{MODEL.__name__}",
         default_hp_metric=False,
     )
+    # Define the first ModelCheckpoint for validation loss
+    checkpoint_val_loss = ModelCheckpoint(
+        monitor="val/val_loss",  # Metric to monitor
+        mode="min",  # Save the model with the minimum validation loss
+        filename="best-val-loss-{epoch:02d}",  # Filename format
+        save_top_k=1,  # Save only the best model
+        every_n_epochs=10,  # Check every epoch
+    )
+
+    # Define the second ModelCheckpoint for another metric (e.g., validation accuracy)
+    checkpoint_validity = ModelCheckpoint(
+        monitor="val/validity",  # Metric to monitor
+        mode="max",  # Save the model with the maximum validation accuracy
+        filename="best-val-validity-{epoch:02d}",  # Filename format
+        save_top_k=1,  # Save only the best model
+        every_n_epochs=50,  # Check every epoch
+    )
     callbacks = [
         # CurriculumLearningScheduler(1, 25, 1.01),
         GenerationMonitor(num_samples=10000, every_n_epochs=50),
-        ModelCheckpoint(
-            monitor="val/val_loss",
-            mode="min",
-            every_n_epochs=10,
-        ),
+        checkpoint_val_loss,
+        checkpoint_validity,
+        LearningRateMonitor(logging_interval="epoch"),
     ]
     trainer = Trainer(
         devices=1,
@@ -80,7 +97,7 @@ def training(args: argparse.Namespace) -> None:
         accumulate_grad_batches=accumulate_grad_batches,
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
-        precision="16-mixed",
+        precision="bf16-mixed",
     )
     trainer.fit(model=model, datamodule=datamodule)
 

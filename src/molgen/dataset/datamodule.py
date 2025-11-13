@@ -3,21 +3,19 @@ from lightning import LightningDataModule
 from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
 
-from ..model.splitting import SourceTargetSplitter
-from ..model.utils import pad_and_mask_sequences
-from torch.nn.functional import one_hot
-from torch_geometric.nn.pool import global_mean_pool
-
-
 from .dataset import DataSet
+from ..model.splitting import SourceTargetSplitter
+from ..model.augmentation import RandomRotationAugmentation
 
 
 def batch_transform(batch):
     # Apply your batch-level augmentation logic here
     # For example, add random noise to all node features in the batch
-    splitter = SourceTargetSplitter(splitting_mode="cyclic_heavy")
-    splitter2 = SourceTargetSplitter(splitting_mode="hydrogen_random")
-    # TODO: Make sure this sampling procedure really does what we want.
+    # data augmentation by random rotation
+    rotation_augmentation = RandomRotationAugmentation()
+    batch.pos = rotation_augmentation.rotate_graphs_randomly(batch.pos, batch.batch)
+    splitter = SourceTargetSplitter(splitting_mode="cyclic")
+
     (
         x_source,  # [n_source_atoms]
         pos_source,  # [n_source_atoms, 3]
@@ -29,27 +27,14 @@ def batch_transform(batch):
         stop_tokens,  # [n_molecules]
     ) = splitter.create_source_target_split(batch)
 
-    # TODO: Make sure this sampling procedure really does what we want.
-    (
-        x_source2,  # [n_source_atoms]
-        pos_source2,  # [n_source_atoms, 3]
-        batch_source2,  # [n_source_atoms]
-        atom_count_source2,
-        x_target2,  # [n_target_atoms]
-        pos_target2,  # [n_target_atoms, 3]
-        batch_target2,  # [n_target_atoms]
-        stop_tokens2,  # [n_molecules]
-    ) = splitter2.create_source_target_split(batch)
-
-    batch_target2 = batch_target2 + batch_target.max() + 1
-    batch.x_source = torch.cat([x_source, x_source2], dim=0)
-    batch.pos_source = torch.cat([pos_source, pos_source2], dim=0)
-    batch.batch_source = torch.cat([batch_source, batch_source2], dim=0)
-    batch.atom_count_source = torch.cat([atom_count_source, atom_count_source2], dim=0)
-    batch.x_target = torch.cat([x_target, x_target2], dim=0)
-    batch.pos_target = torch.cat([pos_target, pos_target2], dim=0)
-    batch.batch_target = torch.cat([batch_target, batch_target2], dim=0)
-    batch.stop_tokens = torch.cat([stop_tokens, stop_tokens2], dim=0)
+    batch.x_source = x_source
+    batch.pos_source = pos_source
+    batch.batch_source = batch_source
+    batch.atom_count_source = atom_count_source
+    batch.x_target = x_target
+    batch.pos_target = pos_target
+    batch.batch_target = batch_target
+    batch.stop_tokens = stop_tokens
 
     return batch
 
