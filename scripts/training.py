@@ -71,15 +71,16 @@ def training(args: argparse.Namespace) -> None:
     )
 
     # Define the second ModelCheckpoint for another metric (e.g., validation accuracy)
+    generate_every_n_epochs = 50
     checkpoint_validity = ModelCheckpoint(
         monitor="val/validity",  # Metric to monitor
         mode="max",  # Save the model with the maximum validation accuracy
         filename="best-val-validity-{epoch:02d}",  # Filename format
         save_top_k=1,  # Save only the best model
-        every_n_epochs=50,  # Check every epoch
+        every_n_epochs=generate_every_n_epochs,  # Check every epoch
     )
     callbacks = [
-        GenerationMonitor(num_samples=10000, every_n_epochs=50),
+        GenerationMonitor(num_samples=10000, every_n_epochs=generate_every_n_epochs),
         checkpoint_val_loss,
         checkpoint_validity,
         LearningRateMonitor(logging_interval="epoch"),

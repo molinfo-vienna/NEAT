@@ -10,6 +10,22 @@ class GenerationMonitor(Callback):
         self.num_samples = num_samples
         self.every_n_epochs = every_n_epochs
 
+    def on_validation_start(self, trainer: Trainer, pl_module: LightningModule):
+        pl_module.log(
+            "val/validity",
+            0,
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+        )
+        pl_module.log(
+            "val/uniqueness",
+            0,
+            prog_bar=True,
+            on_step=False,
+            on_epoch=True,
+        )
+
     def on_validation_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
