@@ -2,8 +2,8 @@ import argparse
 import os
 
 import py3Dmol
-import yaml
 import rdkit
+import yaml
 from rdkit.Chem import Draw, MolToSmiles, rdDepictor
 from rdkit.Chem.AllChem import RemoveHs
 
@@ -62,7 +62,7 @@ if __name__ == "__main__":
         Loader=yaml.FullLoader,
     )
 
-    builder = MoleculeBuilder(small_vocab_size=params["data_set"] == "QM9_small_vocab")
+    builder = MoleculeBuilder()
     x, pos, batch = builder.load_tensor_from_file(params["data_path"])
     mols = builder.generate_rdkit_molecules(x, pos, batch)
 
@@ -81,7 +81,9 @@ if __name__ == "__main__":
 
     # Only plot the first N molecules for clarity
     mols = mols[:NUM_MOLECULES_PLOTTED]
-    img = Draw.MolsToGridImage(mols, molsPerRow=NUM_MOLECULES_PER_ROW, subImgSize=(RESOLUTION, RESOLUTION))
+    img = Draw.MolsToGridImage(
+        mols, molsPerRow=NUM_MOLECULES_PER_ROW, subImgSize=(RESOLUTION, RESOLUTION)
+    )
     img.save(os.path.join(params["data_path"], "generated_molecules.png"))
 
     mols_2d = []
@@ -99,10 +101,10 @@ if __name__ == "__main__":
     print(f"Saved generated molecules images to {os.path.join(params['data_path'])}.")
 
     view = py3Dmol.view(
-        width=NUM_MOLECULES_PER_ROW * RESOLUTION, 
-        height=NUM_MOLECULES_PLOTTED * RESOLUTION, 
-        viewergrid=(NUM_MOLECULES_PLOTTED, NUM_MOLECULES_PER_ROW)
-        )
+        width=NUM_MOLECULES_PER_ROW * RESOLUTION,
+        height=NUM_MOLECULES_PLOTTED * RESOLUTION,
+        viewergrid=(NUM_MOLECULES_PLOTTED, NUM_MOLECULES_PER_ROW),
+    )
 
     for i in range(NUM_MOLECULES_PLOTTED):
         row = i // NUM_MOLECULES_PER_ROW
@@ -117,13 +119,20 @@ if __name__ == "__main__":
 
         # Add the molecule to the py3Dmol viewer
         view.addModel(xyz, "xyz", viewer=(row, col))
-        view.setStyle({"model": -1}, {"stick": {"radius": 0.2}, "sphere": {"scale": 0.3}}, viewer=(row, col))
+        view.setStyle(
+            {"model": -1},
+            {"stick": {"radius": 0.2}, "sphere": {"scale": 0.3}},
+            viewer=(row, col),
+        )
 
     view.zoomTo()
     view.show()
 
-    with open(os.path.join(params["data_path"], "generated_molecules_3d.html"), "w") as f:
+    with open(
+        os.path.join(params["data_path"], "generated_molecules_3d.html"), "w"
+    ) as f:
         f.write(view._make_html())
 
-    print(f"Saved 3D visualization to {os.path.join(params['data_path'], 'generated_molecules_3d.html')}")
-
+    print(
+        f"Saved 3D visualization to {os.path.join(params['data_path'], 'generated_molecules_3d.html')}"
+    )

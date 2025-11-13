@@ -1,5 +1,7 @@
-# Credit: https://github.com/apple/ml-simplefold/blob/main/src/simplefold/model/torch/pos_embed.py
-# This file was taken from the SimpleFold repository as is.
+"""
+Taken as is from the SimpleFold repository:
+https://github.com/apple/ml-simplefold/blob/main/src/simplefold/model/torch/pos_embed.py
+"""
 
 import torch
 from torch import nn

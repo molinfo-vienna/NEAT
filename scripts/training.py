@@ -5,7 +5,7 @@ import torch
 import torch_geometric
 import yaml
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import ModelCheckpoint, LearningRateMonitor
+from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 
 from molgen.dataset import DataModule
@@ -43,7 +43,7 @@ def training(args: argparse.Namespace) -> None:
     datamodule = DataModule(
         DATA_ROOT,
         batch_size=params["batch_size"],
-        split=params["data_split"],
+        source_target_split=params["source_target_split"],
         num_workers=8,
     )
     datamodule.setup()
@@ -97,7 +97,7 @@ def training(args: argparse.Namespace) -> None:
         accumulate_grad_batches=accumulate_grad_batches,
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
-        precision="bf16-mixed",
+        # precision="bf16-mixed",
     )
     trainer.fit(model=model, datamodule=datamodule)
 

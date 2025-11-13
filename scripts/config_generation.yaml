@@ -3,6 +3,4 @@ output_path: /home/rjacob/MolGen/data/generated_9
 data_set: QM9_small_vocab
 num_molecules: 10000
 max_atoms: 100
-temperature: 1.0
-top_k: Null
 num_time_steps: 30

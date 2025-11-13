@@ -2,46 +2,48 @@ import logging
 import os
 
 import torch
-from rdkit.Chem import MolFromXYZBlock, rdDetermineBonds
+from rdkit.Chem import Mol, MolFromXYZBlock, rdDetermineBonds
 
 
 class MoleculeBuilder:
-    def __init__(self, small_vocab_size: bool = True):
-        super().__init__()
-        if small_vocab_size:
-            self.atom_type_to_element = {
-                1: "H",  # Hydrogen
-                2: "C",  # Carbon
-                3: "N",  # Nitrogen
-                4: "O",  # Oxygen
-                5: "F",  # Fluorine
-            }
-        else:
-            self.atom_type_to_element = {
-                1: "H",  # Hydrogen
-                2: "H",  # Hydrogen
-                3: "C",  # Carbon
-                4: "C",  # Carbon
-                5: "C",  # Carbon
-                6: "C",  # Carbon
-                7: "N",  # Nitrogen
-                8: "N",  # Nitrogen
-                9: "N",  # Nitrogen
-                10: "N",  # Nitrogen
-                11: "O",  # Oxygen
-                12: "O",  # Oxygen
-                13: "O",  # Oxygen
-                14: "F",  # Fluorine
-                15: "F",  # Fluorine
-            }
+    """
+    Builds RDKit molecules from tensors.
+    """
 
-    def load_tensor_from_file(self, files_path):
+    def __init__(self):
+        super().__init__()
+        self.atom_type_to_element = {
+            1: "H",  # Hydrogen
+            2: "C",  # Carbon
+            3: "N",  # Nitrogen
+            4: "O",  # Oxygen
+            5: "F",  # Fluorine
+        }
+
+    def load_tensor_from_file(
+        self, files_path: str
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Loads tensors from a file.
+        Args:
+            files_path (str): The path to the file.
+        Returns:
+            tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing the atom types, positions, and batch indices.
+        """
         x = torch.load(os.path.join(files_path, "x.pt")).detach().cpu()
         pos = torch.load(os.path.join(files_path, "pos.pt")).detach().cpu()
         batch = torch.load(os.path.join(files_path, "batch.pt")).detach().cpu()
         return x, pos, batch
 
-    def create_xyz_block(self, x, pos):
+    def create_xyz_block(self, x: torch.Tensor, pos: torch.Tensor) -> str:
+        """
+        Creates an XYZ block from a tensor of atom types and positions.
+        Args:
+            x (torch.Tensor): A tensor of shape (n_atoms,).
+            pos (torch.Tensor): A tensor of shape (n_atoms, 3).
+        Returns:
+            str: An XYZ block.
+        """
         xyz_lines = []
         num_atoms = x.size(0)
         xyz_lines.append(f"{num_atoms}")
@@ -57,10 +59,19 @@ class MoleculeBuilder:
 
     def generate_rdkit_molecules(
         self,
-        x,
-        pos,
-        batch,
-    ):
+        x: torch.Tensor,
+        pos: torch.Tensor,
+        batch: torch.Tensor,
+    ) -> list[Mol]:
+        """
+        Generates RDKit molecules from tensors of atom types and positions.
+        Args:
+            x (torch.Tensor): A tensor of shape (n_atoms,).
+            pos (torch.Tensor): A tensor of shape (n_atoms, 3).
+            batch (torch.Tensor): A tensor of shape (n_atoms,).
+        Returns:
+            list[Mol]: A list of RDKit molecules.
+        """
         mols = []
         unique_batches = batch.unique().tolist()
 

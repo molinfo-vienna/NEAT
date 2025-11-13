@@ -1,6 +1,7 @@
-# https://github.com/LTH14/mar/blob/fe470ac24afbee924668d8c5c83e9fec60af3a73/models/diffloss.py
-# https://github.com/NVlabs/edm/blob/008a4e5316c8e3bfe61a62f874bddba254295afb/training/networks.py
-# https://github.com/NVlabs/edm/blob/008a4e5316c8e3bfe61a62f874bddba254295afb/training/loss.py
+"""
+Taken as is from the QUETZAL repository:
+https://github.com/aspuru-guzik-group/quetzal/blob/main/simple_mlp.py
+"""
 
 import numpy as np
 import torch

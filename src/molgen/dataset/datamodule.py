@@ -1,26 +1,26 @@
-import torch
+import functools
+
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
 
+from .augmentation import RandomRotationAugmentation
 from .dataset import DataSet
-from ..model.splitting import SourceTargetSplitter
-from ..model.augmentation import RandomRotationAugmentation
+from .splitting import SourceTargetSplitter
 
 
-def batch_transform(batch):
+def batch_transform(batch, source_target_split):
     # Apply your batch-level augmentation logic here
     # For example, add random noise to all node features in the batch
     # data augmentation by random rotation
     rotation_augmentation = RandomRotationAugmentation()
     batch.pos = rotation_augmentation.rotate_graphs_randomly(batch.pos, batch.batch)
-    splitter = SourceTargetSplitter(splitting_mode="cyclic")
+    splitter = SourceTargetSplitter(splitting_mode=source_target_split)
 
     (
         x_source,  # [n_source_atoms]
         pos_source,  # [n_source_atoms, 3]
         batch_source,  # [n_source_atoms]
-        atom_count_source,
         x_target,  # [n_target_atoms]
         pos_target,  # [n_target_atoms, 3]
         batch_target,  # [n_target_atoms]
@@ -30,7 +30,6 @@ def batch_transform(batch):
     batch.x_source = x_source
     batch.pos_source = pos_source
     batch.batch_source = batch_source
-    batch.atom_count_source = atom_count_source
     batch.x_target = x_target
     batch.pos_target = pos_target
     batch.batch_target = batch_target
@@ -39,142 +38,96 @@ def batch_transform(batch):
     return batch
 
 
-# Create a custom DataLoader with a batch-level transform
-def custom_collate_fn(batch):
-    batch = Batch.from_data_list(batch)  # Collate individual samples into a batch
-    return batch_transform(batch)  # Apply the batch-level transform
+def custom_collate_fn(batch, source_target_split):
+    batch = Batch.from_data_list(batch)
+    return batch_transform(batch, source_target_split)
 
 
 class DataModule(LightningDataModule):
+    """
+    DataModule for loading and transforming the data for the MolGen model.
+
+    Args:
+        training_data_dir (str): Directory containing the training data.
+        batch_size (int): Batch size for the data loader.
+        source_target_split (str): Source-target split mode.
+        num_workers (int): Number of workers for the data loader.
+
+    Returns:
+        DataModule for loading and transforming the data for the MolGen model.
+    """
+
     def __init__(
         self,
         training_data_dir: str,
-        batch_size: int = None,
-        split: str = "random",
-        num_workers: int = 4,
+        batch_size: int = 32,
+        source_target_split: str = "cyclic",
+        num_workers: int = 1,
     ) -> None:
         super(DataModule, self).__init__()
         self.training_data_dir = training_data_dir
         self.batch_size = batch_size
+        self.source_target_split = source_target_split
         self.num_workers = num_workers
-        self.split = split
+
+        self.source_target_split_fn = functools.partial(
+            custom_collate_fn, source_target_split=self.source_target_split
+        )
 
     def setup(self, stage: str = "fit") -> None:
         if stage == "fit":
             self.full_data = DataSet(self.training_data_dir, transform=None)
-            if self.split == "random":
-                seed = 42  # or any fixed number
-                generator = torch.Generator().manual_seed(seed)
-                perm = torch.randperm(len(self.full_data), generator=generator)
-                self.full_data = self.full_data[perm]
 
-                self.training_data = self.full_data[: int(0.8 * len(self.full_data))]
-                self.validation_data = self.full_data[
-                    int(0.8 * len(self.full_data)) : int(0.9 * len(self.full_data))
-                ]
-                self.test_data = self.full_data[int(0.9 * len(self.full_data)) :]
+            # Use the EDM splits for the training, validation, and test sets
+            splits = self.full_data.get_qm9_splits()
+            self.training_data = self.full_data[splits["train"]]
+            self.validation_data = self.full_data[splits["val"]]
+            self.test_data = self.full_data[splits["test"]]
 
-                print(f"Number of training graphs: {len(self.training_data)}")
-                print(f"Number of validation graphs: {len(self.validation_data)}")
-                print(f"Number of test graphs: {len(self.test_data)}")
-
-            elif self.split == "edm_split":
-                splits = self.full_data.get_qm9_splits(edm_splits=True)
-                print("Using predefined EDM splits.")
-                self.training_data = self.full_data[splits["train"]]
-                self.validation_data = self.full_data[splits["val"]]
-                self.test_data = self.full_data[splits["test"]]
-
-                print(f"Number of training graphs: {len(self.training_data)}")
-                print(f"Number of validation graphs: {len(self.validation_data)}")
-                print(f"Number of test graphs: {len(self.test_data)}")
-            else:
-                raise ValueError(f"Unknown data split: {self.split}")
+            print(f"Number of training graphs: {len(self.training_data)}")
+            print(f"Number of validation graphs: {len(self.validation_data)}")
+            print(f"Number of test graphs: {len(self.test_data)}")
 
     def train_dataloader(self, shuffle_data=True) -> DataLoader:
-        if self.batch_size is None:
-            return DataLoader(
-                self.training_data,
-                batch_size=len(self.training_data),
-                shuffle=shuffle_data,
-                drop_last=True,
-                num_workers=self.num_workers,
-                persistent_workers=True,
-                collate_fn=custom_collate_fn,
-            )
-        else:
-            return DataLoader(
-                self.training_data,
-                batch_size=self.batch_size,
-                shuffle=shuffle_data,
-                drop_last=True,
-                num_workers=self.num_workers,
-                persistent_workers=True,
-                collate_fn=custom_collate_fn,
-            )
+        return DataLoader(
+            self.training_data,
+            batch_size=self.batch_size,
+            shuffle=shuffle_data,
+            drop_last=True,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            collate_fn=self.source_target_split_fn,
+        )
 
     def val_dataloader(self) -> DataLoader:
-        if self.batch_size is None:
-            return DataLoader(
-                self.validation_data,
-                batch_size=len(self.validation_data),
-                shuffle=False,
-                drop_last=True,
-                num_workers=self.num_workers,
-                persistent_workers=True,
-                collate_fn=custom_collate_fn,
-            )
-        else:
-            return DataLoader(
-                self.validation_data,
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=self.num_workers,
-                persistent_workers=True,
-                drop_last=True,
-                collate_fn=custom_collate_fn,
-            )
+        return DataLoader(
+            self.validation_data,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            drop_last=True,
+            collate_fn=self.source_target_split_fn,
+        )
 
     def test_dataloader(self) -> DataLoader:
-        if self.batch_size is None:
-            return DataLoader(
-                self.test_data,
-                batch_size=len(self.test_data),
-                shuffle=False,
-                drop_last=False,
-                num_workers=self.num_workers,
-                persistent_workers=True,
-                collate_fn=custom_collate_fn,
-            )
-        else:
-            return DataLoader(
-                self.test_data,
-                batch_size=self.batch_size,
-                shuffle=False,
-                drop_last=False,
-                num_workers=self.num_workers,
-                persistent_workers=True,
-                collate_fn=custom_collate_fn,
-            )
+        return DataLoader(
+            self.test_data,
+            batch_size=self.batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            collate_fn=self.source_target_split_fn,
+        )
 
     def full_dataloader(self) -> DataLoader:
-        if self.batch_size is None:
-            return DataLoader(
-                self.full_data,
-                batch_size=len(self.full_data),
-                shuffle=False,
-                drop_last=False,
-                num_workers=self.num_workers,
-                persistent_workers=True,
-                collate_fn=custom_collate_fn,
-            )
-        else:
-            return DataLoader(
-                self.full_data,
-                batch_size=self.batch_size,
-                shuffle=False,
-                drop_last=False,
-                num_workers=self.num_workers,
-                persistent_workers=True,
-                collate_fn=custom_collate_fn,
-            )
+        return DataLoader(
+            self.full_data,
+            batch_size=self.batch_size,
+            shuffle=False,
+            drop_last=False,
+            num_workers=self.num_workers,
+            persistent_workers=True,
+            collate_fn=self.source_target_split_fn,
+        )

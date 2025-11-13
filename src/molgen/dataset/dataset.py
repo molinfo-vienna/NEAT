@@ -14,11 +14,12 @@ import numpy as np
 import torch
 import yaml
 from rdkit import Chem, RDLogger
-from rdkit.Chem.rdchem import HybridizationType
 from torch_geometric.data import Data, InMemoryDataset
 from tqdm import tqdm
 
 RDLogger.DisableLog("rdApp.*")  # Disables all RDKit warnings and informational messages
+
+np.random.seed(0)
 
 
 class DataSet(InMemoryDataset):
@@ -109,7 +110,7 @@ class DataSet(InMemoryDataset):
         vocab_path = os.path.join(
             os.path.dirname(os.path.dirname(self.root)),
             "scripts",
-            "qm9_small_vocab.yaml",
+            "qm9_vocab.yaml",
         )
         try:
             with open(vocab_path, "r") as file:
@@ -171,25 +172,9 @@ class DataSet(InMemoryDataset):
             # mol = Chem.AddHs(mol)
             # mol, sanitized = DataSet.try_sanitize_molecule(mol)
 
-            # Define a mapping for hybridization states to integers
-            hybridization_mapping = {
-                HybridizationType.S: 0,
-                HybridizationType.SP: 1,
-                HybridizationType.SP2: 2,
-                HybridizationType.SP3: 3,
-                HybridizationType.SP3D: 4,
-                HybridizationType.SP3D2: 5,
-                HybridizationType.UNSPECIFIED: -1,  # Optional: handle unspecified hybridization
-            }
-
             # Create a tensor for atomic numbers and hybridization states
             x = torch.tensor(
-                [
-                    self.vocabulary[
-                        f"({atom.GetAtomicNum()}, {hybridization_mapping[atom.GetHybridization()]})"
-                    ]
-                    for atom in mol.GetAtoms()
-                ],
+                [self.vocabulary[atom.GetAtomicNum()] for atom in mol.GetAtoms()],
                 dtype=torch.long,
             )
 
@@ -205,7 +190,7 @@ class DataSet(InMemoryDataset):
                 i = bond.GetBeginAtomIdx()
                 j = bond.GetEndAtomIdx()
                 edge_index.append((i, j))
-                edge_index.append((j, i))  # Add reverse direction for undirected graph
+                edge_index.append((j, i))
 
                 # Bond attributes: OHE for bond type, aromaticity, and ring membership
                 bond_type = bond.GetBondType()
@@ -223,42 +208,22 @@ class DataSet(InMemoryDataset):
 
                 # Combine bond attributes
                 edge_attr.append(bond_type_ohe + [is_aromatic, in_ring])
-                edge_attr.append(
-                    bond_type_ohe + [is_aromatic, in_ring]
-                )  # Reverse direction
+                edge_attr.append(bond_type_ohe + [is_aromatic, in_ring])  # Add reverse bond
 
             # Convert edge_index and edge_attr to tensors
             edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
             edge_attr = torch.tensor(edge_attr, dtype=torch.float32)
 
-            # Generate the Minimum Spanning Tree (MST)
+            # Generate molecular graph
             G = nx.Graph()
             for i, j in edge_index.t().tolist():
                 G.add_edge(i, j)
 
             # Compute eccentricities for all nodes
-            eccentricities = nx.eccentricity(G)  # Dictionary {node: eccentricity}
+            eccentricities = nx.eccentricity(G)
             eccentricity_tensor = torch.tensor(
                 [eccentricities[node] for node in range(len(G.nodes))], dtype=torch.long
             )
-
-            # mst = nx.minimum_spanning_tree(G)  # Compute MST using NetworkX
-            # edge_index_mst = (
-            #     torch.tensor(list(mst.edges), dtype=torch.long).t().contiguous()
-            # )
-
-            # # Also store the tree depth in the data object
-            # root_node = list(mst.nodes)[0]
-            # depths = nx.single_source_shortest_path_length(mst, root_node)
-
-            # # Compute edge hierarchy levels
-            # edge_hierarchy = []
-            # for i, j in mst.edges:
-            #     # The hierarchical level of the edge is the maximum depth of its two nodes
-            #     edge_hierarchy.append(max(depths[i], depths[j]))
-
-            # edge_hierarchy = torch.tensor(edge_hierarchy, dtype=torch.long)
-            # diameter = nx.diameter(mst)
 
             # Create PyG Data object
             data = Data(
@@ -266,9 +231,6 @@ class DataSet(InMemoryDataset):
                 pos=pos,
                 edge_index=edge_index,
                 edge_attr=edge_attr,
-                # edge_index_mst=edge_index_mst,
-                # edge_attr_mst=edge_hierarchy,
-                # diameter=diameter,
                 eccentricity=eccentricity_tensor,
             )
 
@@ -280,7 +242,6 @@ class DataSet(InMemoryDataset):
 
     def get_qm9_splits(
         self,
-        edm_splits: bool,
     ) -> Dict[str, np.ndarray]:
         """Adapted from https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/main/qm9/data/prepare/qm9.py."""
 
@@ -332,12 +293,7 @@ class DataSet(InMemoryDataset):
         Ntest = int(0.1 * Nmols)
         Nval = Nmols - (Ntrain + Ntest)
 
-        # Generate random permutation.
-        np.random.seed(0)
-        if edm_splits:
-            data_permutation = np.random.permutation(Nmols)
-        else:
-            data_permutation = np.arange(Nmols)
+        data_permutation = np.random.permutation(Nmols)
 
         train, val, test, extra = np.split(
             data_permutation, [Ntrain, Ntrain + Nval, Ntrain + Nval + Ntest]

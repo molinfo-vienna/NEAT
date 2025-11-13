@@ -1,6 +1,7 @@
 import math
 
 import torch
+from torch import Tensor
 
 
 class RandomRotationAugmentation:
@@ -12,18 +13,16 @@ class RandomRotationAugmentation:
     def __init__(self):
         pass
 
-    def rotate_graphs_randomly(self, positions, batch_idx):
+    def rotate_graphs_randomly(self, positions: Tensor, batch_idx: Tensor):
         """
         Rotates and translates the positions of nodes in a batch of PyG graphs w.r.t. their centers.
 
         Args:
-            positions (torch.Tensor): A tensor of shape (num_nodes, 3) containing the 3D positions of all nodes.
-            batch_idx (torch.Tensor): A tensor of shape (num_nodes,) indicating the graph index for each node.
-            quaternions (torch.Tensor): A tensor of shape (batch_size, 4) containing the rotation quaternions for each graph.
-            translation_vectors (torch.Tensor): A tensor of shape (batch_size, 3) containing the translation vectors for each graph.
+            positions (Tensor): A tensor of shape (num_nodes, 3) containing the 3D positions of all nodes.
+            batch_idx (Tensor): A tensor of shape (num_nodes,) indicating the graph index for each node.
 
         Returns:
-            torch.Tensor: A tensor of shape (num_nodes, 3) containing the rotated and translated positions.
+            Tensor: A tensor of shape (num_nodes, 3) containing the rotated and translated positions.
         """
         # Step 0: Draw random quaternions for each graph
         batch_size = batch_idx.max().item() + 1
@@ -60,16 +59,16 @@ class RandomRotationAugmentation:
 
         return recentered_positions
 
-    def _quaternions_to_rotation_matrices(self, quaternions):
+    def _quaternions_to_rotation_matrices(self, quaternions: Tensor):
         """
         Converts a batch of quaternions to a batch of 3x3 rotation matrices.
 
         Args:
-            quaternions (torch.Tensor): A tensor of shape (batch_size, 4) representing a batch of quaternions [q_w, q_x, q_y, q_z].
+            quaternions (Tensor): A tensor of shape (batch_size, 4) representing a batch of quaternions [q_w, q_x, q_y, q_z].
                                         The quaternions are assumed to be normalized.
 
         Returns:
-            torch.Tensor: A tensor of shape (batch_size, 3, 3) containing the rotation matrices.
+            Tensor: A tensor of shape (batch_size, 3, 3) containing the rotation matrices.
         """
         # Ensure the quaternions are normalized
         quaternions = quaternions / quaternions.norm(dim=1, keepdim=True)
@@ -115,16 +114,16 @@ class RandomRotationAugmentation:
 
         return rotation_matrices
 
-    def _compute_graph_centers(self, positions, batch_idx):
+    def _compute_graph_centers(self, positions: Tensor, batch_idx: Tensor):
         """
         Computes the center (mean position) of each graph in the batch.
 
         Args:
-            positions (torch.Tensor): A tensor of shape (num_nodes, 3) containing the 3D positions of all nodes.
-            batch_idx (torch.Tensor): A tensor of shape (num_nodes,) indicating the graph index for each node.
+            positions (Tensor): A tensor of shape (num_nodes, 3) containing the 3D positions of all nodes.
+            batch_idx (Tensor): A tensor of shape (num_nodes,) indicating the graph index for each node.
 
         Returns:
-            torch.Tensor: A tensor of shape (batch_size, 3) containing the center of each graph.
+            Tensor: A tensor of shape (batch_size, 3) containing the center of each graph.
         """
         # Sum the positions for each graph
         graph_sums = torch.zeros(
@@ -144,7 +143,7 @@ class RandomRotationAugmentation:
 
         return graph_centers
 
-    def _generate_uniform_quaternions(self, batch_size, device):
+    def _generate_uniform_quaternions(self, batch_size: int, device: torch.device):
         """
         Generate uniformly sampled unit quaternions.
 
@@ -153,7 +152,7 @@ class RandomRotationAugmentation:
             device (torch.device): Device for computations (e.g., 'cpu' or 'cuda').
 
         Returns:
-            torch.Tensor: Tensor of shape (batch_size, 4) containing unit quaternions.
+            Tensor: Tensor of shape (batch_size, 4) containing unit quaternions.
         """
         N = batch_size
 
@@ -178,11 +177,21 @@ class RandomRotationAugmentation:
 
         return random_quaternions
 
-    def _draw_random_quaternions(self, batch_size, device):
+    def _draw_random_quaternions(self, batch_size: int, device: torch.device):
+        """
+        Draws random rotation quaternions for each graph.
+
+        Args:
+            batch_size (int): Number of quaternions to generate.
+            device (torch.device): Device for computations.
+
+        Returns:
+            Tensor: Tensor of shape (batch_size, 4) containing unit quaternions.
+        """
         # Generate random rotation quaternions for each graph
         rot = self._generate_uniform_quaternions(batch_size, device)
         rot = rot / rot.norm(dim=1, keepdim=True)
         mask = rot[:, 0] < 0  # Check where w < 0
         rot[mask] = -rot[mask]  # Flip the sign of the entire quaternion
 
-        return rot
+        return rot  # Shape: (batch_size, 4)

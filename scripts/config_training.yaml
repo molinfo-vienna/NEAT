@@ -1,11 +1,9 @@
 accumulate_grad_batches: 1
-batch_size: 512
+batch_size: 256
 bias: true
-block_size: 512
-data_set: QM9_small_vocab
-data_split: edm_split
+bias_zero: false
+data_set: QM9
 dropout: 0.1
-fm_conditioning: ada
 learning_rate: 1.e-4
 lr_min_ratio: 0.1
 lr_decay_epochs: 10000
@@ -16,8 +14,7 @@ n_embd_fm: 1536
 n_head: 12
 n_layer: 12
 n_layers_fm: 6
-optimal_transport: true
-pooling: add
+rope: false
 source_target_split: cyclic
 time_step_resampling: 4
 time_step_sampling: logit_normal

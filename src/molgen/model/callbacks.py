@@ -1,4 +1,3 @@
-import torch
 from lightning import Callback, LightningModule, Trainer
 from rdkit import Chem
 
@@ -16,12 +15,11 @@ class GenerationMonitor(Callback):
     ) -> None:
         if (
             trainer.current_epoch % self.every_n_epochs != 0
-            or trainer.current_epoch == 0
+            #or trainer.current_epoch == 0
         ):
             return
         x, pos, batch = pl_module.generate(batch_size=self.num_samples)
-        small_vocab = pl_module.hparams["data_set"] == "QM9_small_vocab"
-        builder = MoleculeBuilder(small_vocab_size=small_vocab)
+        builder = MoleculeBuilder()
         mols = builder.generate_rdkit_molecules(x, pos, batch)
         n_valid = self.compute_validity(mols)
         n_unique = self.compute_uniqueness(mols)
@@ -57,53 +55,3 @@ class GenerationMonitor(Callback):
                 smiles = Chem.MolToSmiles(mol, canonical=True)
                 unique_smiles.add(smiles)
         return len(unique_smiles)
-
-
-class CurriculumLearningScheduler(Callback):
-    def __init__(
-        self,
-        set_size_at_start: int = 1,
-        num_epochs_before_increase: int = 5,
-        minimum_improvement_threshold: float = 1.05,
-    ) -> None:
-        super().__init__()
-        self.set_size_at_start = set_size_at_start
-        self.num_epochs_before_increase = num_epochs_before_increase
-        self.minimum_improvement_threshold = minimum_improvement_threshold
-        self.loss_at_reference_point = torch.inf
-        self.counter = 0
-
-    def on_fit_start(self, trainer: Trainer, pl_module: LightningModule) -> None:
-        pl_module.splitter.target_set_max_size = self.set_size_at_start
-
-    def on_validation_epoch_end(
-        self, trainer: Trainer, pl_module: LightningModule
-    ) -> None:
-
-        pl_module.log(
-            "target_set_max_size",
-            pl_module.splitter.target_set_max_size,
-            prog_bar=False,
-            on_step=False,
-            on_epoch=True,
-        )
-
-        if trainer.current_epoch == 0:
-            return
-
-        current_loss = trainer.logged_metrics["val/val_loss"]
-
-        if (
-            current_loss * self.minimum_improvement_threshold
-        ) < self.loss_at_reference_point:
-            self.loss_at_reference_point = current_loss
-            self.counter = 0
-        elif self.counter < self.num_epochs_before_increase:
-            self.counter += 1
-        else:
-            pl_module.splitter.target_set_max_size += 1
-            self.loss_at_reference_point = torch.inf
-            self.counter = 0
-            print(
-                f"Graph size increased to {pl_module.splitter.target_set_max_size} at epoch {trainer.current_epoch}"
-            )

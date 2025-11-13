@@ -1,31 +1,23 @@
 """
-Full definition of a GPT Language Model, all of it in this single file.
-References:
-1) the official GPT-2 TensorFlow implementation released by OpenAI:
-https://github.com/openai/gpt-2/blob/master/src/model.py
-2) huggingface/transformers PyTorch implementation:
-https://github.com/huggingface/transformers/blob/main/src/transformers/models/gpt2/modeling_gpt2.py
+Taken and modified from the nanoGPT repository:
+https://github.com/karpathy/nanoGPT/blob/master/model.py
 """
+
+from typing import Optional
 
 import torch
 import torch.nn as nn
-from torch.nn import functional as F
-
-
-class LayerNorm(nn.Module):
-    """LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False"""
-
-    def __init__(self, ndim, bias):
-        super().__init__()
-        self.weight = nn.Parameter(torch.ones(ndim))
-        self.bias = nn.Parameter(torch.zeros(ndim)) if bias else None
-
-    def forward(self, input):
-        return F.layer_norm(input, self.weight.shape, self.weight, self.bias, 1e-5)
 
 
 class MaskedBidirectionalAttention(nn.Module):
-    def __init__(self, n_embd, n_head, dropout, bias, pos_embedder=None):
+    def __init__(
+        self,
+        n_embd: int,
+        n_head: int,
+        dropout: float,
+        bias: bool,
+        pos_embedder: Optional[nn.Module] = None,
+    ):
         super().__init__()
         assert n_embd % n_head == 0
         # key, query, value projections for all heads, but in a batch
@@ -95,96 +87,39 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    def __init__(self, n_embd, n_head, dropout, bias, pos_embedder=None):
+    """
+    A transformer block with masked bidirectional attention.
+    Args:
+        n_embd (int): The number of embedding dimensions.
+        n_head (int): The number of attention heads.
+        dropout (float): The dropout rate.
+        bias (bool): Whether to use bias in the layers.
+        pos_embedder (Optional[nn.Module]): The positional embedder to use. Relates to rope embeddings.
+    """
+
+    def __init__(
+        self,
+        n_embd: int,
+        n_head: int,
+        dropout: float,
+        bias: bool,
+        bias_zero: bool,
+        pos_embedder: Optional[nn.Module] = None,
+    ):
         super().__init__()
-        self.ln_1 = LayerNorm(n_embd, bias=bias)
+        self.ln_1 = nn.LayerNorm(n_embd, bias=bias_zero)
         self.attn = MaskedBidirectionalAttention(
             n_embd, n_head, dropout, bias, pos_embedder
         )
-        self.ln_2 = LayerNorm(n_embd, bias=bias)
-        self.mlp = MLP(n_embd, dropout, bias)
+        self.ln_2 = nn.LayerNorm(n_embd, bias=bias_zero)
+        self.mlp = MLP(n_embd, dropout, bias_zero)
 
-    def forward(self, x, attn_mask=None, pos=None):
+    def forward(
+        self,
+        x: torch.Tensor,
+        attn_mask: torch.Tensor,
+        pos: Optional[torch.Tensor] = None,
+    ):
         x = x + self.attn(self.ln_1(x), attn_mask=attn_mask, pos=pos)
         x = x + self.mlp(self.ln_2(x))
         return x
-
-
-# -- Deprecated Attention Pooling Module --- #
-
-# class AttentionPooling(nn.Module):
-#     def __init__(self, n_embd, n_head, dropout, bias):
-#         super().__init__()
-#         assert (
-#             n_embd % n_head == 0
-#         ), "Embedding dimension must be divisible by the number of heads"
-
-#         # Learnable query vector (1 x 1 x n_embd)
-#         self.query = nn.Parameter(torch.randn(1, 1, n_embd))
-
-#         # Key, query, value projections for all heads
-#         self.c_attn = nn.Linear(n_embd, 2 * n_embd, bias=bias)
-
-#         # Output projection
-#         self.c_proj = nn.Linear(n_embd, n_embd, bias=bias)
-
-#         # Regularization
-#         self.attn_dropout = nn.Dropout(dropout)
-#         self.resid_dropout = nn.Dropout(dropout)
-
-#         self.n_head = n_head
-#         self.n_embd = n_embd
-#         self.dropout = dropout
-
-#     def forward(self, x):
-#         """
-#         Args:
-#             x: Input tensor of shape (B, T, C)
-#                 - B: Batch size
-#                 - T: Sequence length (number of atoms)
-#                 - C: Embedding dimension (n_embd)
-#         Returns:
-#             pooled_output: Tensor of shape (B, C)
-#                 - Aggregated molecular representation for each molecule in the batch
-#         """
-#         B, T, C = (
-#             x.size()
-#         )  # Batch size, sequence length, embedding dimensionality (n_embd)
-
-#         # Expand the learnable query vector to match the batch size
-#         query = self.query.expand(B, -1, -1)  # Shape: (B, 1, C)
-
-#         # Calculate query, key, values for all heads
-#         k, v = self.c_attn(x).split(self.n_embd, dim=2)
-
-#         # Reshape for multi-head attention
-#         k = k.view(B, T, self.n_head, C // self.n_head).transpose(
-#             1, 2
-#         )  # (B, nh, T, hs)
-#         q = query.view(B, 1, self.n_head, C // self.n_head).transpose(
-#             1, 2
-#         )  # (B, nh, 1, hs)
-#         v = v.view(B, T, self.n_head, C // self.n_head).transpose(
-#             1, 2
-#         )  # (B, nh, T, hs)
-
-#         # Apply scaled dot-product attention
-#         y = torch.nn.functional.scaled_dot_product_attention(
-#             q,
-#             k,
-#             v,
-#             attn_mask=None,  # No mask needed for pooling
-#             dropout_p=self.dropout if self.training else 0,
-#             is_causal=False,  # Not causal, as this is pooling
-#         )
-
-#         # Reshape the output back to (B, 1, C)
-#         y = y.transpose(1, 2).contiguous().view(B, 1, C)
-
-#         # Output projection
-#         y = self.resid_dropout(self.c_proj(y))
-
-#         # Remove the singleton dimension (B, 1, C) -> (B, C)
-#         pooled_output = y.squeeze(1)
-
-#         return pooled_output

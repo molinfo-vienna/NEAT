@@ -1,40 +1,37 @@
+"""
+Taken and modified from the nanoGPT repository:
+https://github.com/karpathy/nanoGPT/blob/master/model.py
+With contributions from:
+https://arxiv.org/pdf/2403.03206.pdf
+"""
+
 import math
 import types
-from typing import Union
 
 import torch
+import torch.nn as nn
 from lightning import LightningModule
 from torch import Tensor
 from torch.nn import functional as F
-from torch.nn.functional import one_hot
 from torch.optim import Optimizer
 from torch_geometric.data import Data
-from torch_geometric.nn.models import MLP
-from torch_geometric.nn.pool import global_mean_pool, global_add_pool, radius_graph
-from torch_geometric.utils import to_dense_adj
+from torch_geometric.nn.pool import global_add_pool, global_mean_pool
 
-from .attention import Block, LayerNorm
-from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
+from .attention import Block
+from .positional_encoding import (
+    AxialRotaryPositionEncoding,
+    FourierPositionEncoding
+)
 from .simple_mlp import SimpleMLPAdaLN
-from .splitting import SourceTargetSplitter
-from .utils import create_time_embeddings, pad_and_mask_sequences
 
 
 class MolGen(LightningModule):
     def __init__(self, **params) -> None:
         super(MolGen, self).__init__()
-        # This will be handy when we introduce more hyper parameters
-        self.hparams.setdefault("pooling", "add")
-        self.hparams.setdefault("fm_conditioning", "add")
-        self.hparams.setdefault("time_step_sampling", "uniform")
-        self.hparams.setdefault("time_step_resampling", 4)
-        self.hparams.setdefault("source_target_split", "cyclic")
-        self.hparams.setdefault("optimal_transport", False)
-        self.hparams.setdefault("attention_radius", None)
         self.save_hyperparameters()
 
         # Atom type embedding layer
-        self.atom_type_embedding = torch.nn.Embedding(
+        self.atom_type_embedding = nn.Embedding(
             num_embeddings=self.hparams.vocab_size, embedding_dim=self.hparams.n_embd
         )
 
@@ -44,94 +41,78 @@ class MolGen(LightningModule):
         )
 
         # Dropout layer
-        self.dropout_layer = torch.nn.Dropout(self.hparams.dropout)
+        self.dropout_layer = nn.Dropout(self.hparams.dropout)
 
         # Transformer blocks
-        self.transformer_blocks = torch.nn.ModuleList(
+        self.transformer_blocks = nn.ModuleList(
             [
                 Block(
                     self.hparams.n_embd,
                     self.hparams.n_head,
                     self.hparams.dropout,
                     self.hparams.bias,
-                    # AxialRotaryPositionEncoding(
-                    #     embed_dim=self.hparams.n_embd,
-                    #     num_heads=self.hparams.n_head,
-                    # ),
+                    self.hparams.bias_zero,
+                    (
+                        AxialRotaryPositionEncoding(
+                            embed_dim=self.hparams.n_embd,
+                            num_heads=self.hparams.n_head,
+                        )
+                        if self.hparams.rope
+                        else None
+                    ),
                 )
                 for _ in range(self.hparams.n_layer)
             ]
         )
-        self.output_layer_norm = LayerNorm(self.hparams.n_embd, bias=self.hparams.bias)
 
-        self.linear_output_head = torch.nn.Linear(
-            self.hparams.n_embd, self.hparams.vocab_size, bias=False
+        # Layer normalization after the transformer blocks
+        self.layer_norm_after_transformer = nn.LayerNorm(
+            self.hparams.n_embd, bias=self.hparams.bias_zero
         )
 
-        # Weight tying
-        # with weight tying when using torch.compile() some warnings get generated:
-        # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        self.atom_type_embedding.weight = self.linear_output_head.weight
-
-        # So far it is the GPT logic, Flow Matching only needs an additional MLP
-        self.fourier_embedding_layer_fm = FourierPositionEncoding(
-            out_dim=self.hparams.n_embd
+        # Linear prediction head for atom type prediction
+        self.atom_type_prediction_head = nn.Linear(
+            self.hparams.n_embd,
+            self.hparams.vocab_size,
+            bias=self.hparams.bias,
         )
 
-        if self.hparams.fm_conditioning != "ada":
-            # A simple MLP with layer norm used for the flow network
-            channel_list = [
-                self.hparams.n_embd_fm for _ in range(self.hparams.n_layers_fm)
-            ]
-            if self.hparams.fm_conditioning == "add":
-                channel_list[0] = self.hparams.n_embd  # input is n_embd
-            elif self.hparams.fm_conditioning == "concat":
-                channel_list[0] = 2 * self.hparams.n_embd  # input is 2*n_embd
-            else:
-                raise ValueError(
-                    f"Unknown fm_conditioning method: {self.hparams.fm_conditioning}"
-                )
-            channel_list.append(3)  # output is 3D vector
-            self.flow_matching_mlp = MLP(
-                channel_list=channel_list,
-                dropout=self.hparams.dropout,
-                bias=self.hparams.bias,
-            )
-
-        # init all weights, this is again from the GPT-2 code
+        # Init all weights (taken from the nanoGPT repository)
         self.apply(self._init_weights)
-        # apply special scaled init to the residual projections, per GPT-2 paper
+        # Apply special scaled initialization to the residual projections
+        # (taken from the nanoGPT repository)
         for pn, p in self.named_parameters():
             if pn.endswith("c_proj.weight"):
-                torch.nn.init.normal_(
+                nn.init.normal_(
                     p, mean=0.0, std=0.02 / math.sqrt(2 * self.hparams.n_layer)
                 )
 
-        # This is the Diffusion MLP with AdaLN conditioning.
-        # It was used in the original diffusion loss paper, and quetzal also uses it.
-        if self.hparams.fm_conditioning == "ada":
-            config = types.SimpleNamespace(
-                diff_w=self.hparams.n_embd_fm,  # model hidden width
-                n_embd=self.hparams.n_embd,  # dimension of conditioning vector c
-                diff_fourier=512,  # number of Fourier channels for coord embedding
-                coord_bandwidth=20.0,  # frequency bandwidth for Fourier features
-                diff_d=self.hparams.n_layers_fm,  # number of residual blocks
-                diff_mlp="mlp",  # use MLP feedforward
-                diff_mlp_expand=1,  # expansion factor for MLP
-            )
-            self.ada_mlp = SimpleMLPAdaLN(config)
-
-        self.splitter = SourceTargetSplitter(
-            splitting_mode=self.hparams.source_target_split
+        # This is the Diffusion MLP with AdaLN conditioning.s
+        # It was used in the original diffusion loss paper, and QUETZAL also uses it.
+        config = types.SimpleNamespace(
+            diff_w=self.hparams.n_embd_fm,  # model hidden width
+            n_embd=self.hparams.n_embd,  # dimension of conditioning vector c
+            diff_fourier=512,  # number of Fourier channels for coord embedding
+            coord_bandwidth=20.0,  # frequency bandwidth for Fourier features
+            diff_d=self.hparams.n_layers_fm,  # number of residual blocks
+            diff_mlp="mlp",  # use MLP feedforward
+            diff_mlp_expand=1,  # expansion factor for MLP
         )
-        self.target_set_max_size = -1
+        self.ada_mlp = SimpleMLPAdaLN(config)
 
-        # report number of parameters
         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
-    def get_num_params(self):
+    def _init_weights(self, module: nn.Module) -> None:
+        """Initialize weights as in NanoGPT"""
+        if isinstance(module, nn.Linear):
+            # std is chosen w.r.t. sqrt(embd_dim)
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def get_num_params(self) -> int:
         """
         Return the number of parameters in the model.
         For non-embedding count (default), the position embeddings get subtracted.
@@ -142,23 +123,8 @@ class MolGen(LightningModule):
 
         return n_params
 
-    def _init_weights(self, module):
-        """Initialize weights as in NanoGPT"""
-        if isinstance(module, torch.nn.Linear):
-            # std is chosen w.r.t. sqrt(embd_dim)
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-            if module.bias is not None:
-                torch.nn.init.zeros_(module.bias)
-        elif isinstance(module, torch.nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-
-    def forward(self, data):
+    def forward(self, data: Data) -> tuple[Tensor, Tensor, Tensor]:
         device = data.x.device
-        atom_counts = torch.bincount(data.batch)
-        max_atom_count = atom_counts.max()
-        assert (
-            max_atom_count <= self.hparams.block_size
-        ), f"Cannot forward sequence of length {max_atom_count}, block size is only {self.hparams.block_size}"
 
         # We split the molecular data into source and target atom sets.
         # The indexing tensors point to the same molecules as in the original batch.
@@ -166,25 +132,22 @@ class MolGen(LightningModule):
         # If it contains all atoms, then the target set will be empty.
         # The stop tokens mask indicates which molecules have empty target sets.
 
-        # Now first compute the representation of the source atom sets with the transformer
+        # (1) Compute the representation of the source atom sets with the transformer
         source_set_representation = self.compute_source_set_representation(
-            data.x_source, data.pos_source, data.atom_count_source, device
-        )  # [n_molecules, n_embd]
+            data.x_source, data.pos_source, data.batch_source, device
+        )  # [batch_size, n_embd]
 
-        # From this representation, we can calculate a cross-entropy loss for atom type
-        # prediction, and a flow matching loss for the target atom positions.
-        # Note that these two objectives are disentangled and independent of each other.
-
-        # --- Atom type / Stop token prediction loss ---
-
-        logits = self.linear_output_head(
+        # (2) Compute the logits for the atom type prediction
+        logits = self.atom_type_prediction_head(
             source_set_representation
         )  # [n_target_sets, vocab_size]
 
+        # (3) Calculate a cross-entropy loss for atom type prediction
         loss_ce = self.compute_atom_type_loss(
             logits, data.x_target, data.batch_target, data.stop_tokens, device
         )
 
+        # (4) Calculate a flow matching loss for the target atom positions
         loss_fm = self.compute_flow_matching_loss(
             data.x_target,
             data.pos_target,
@@ -194,72 +157,129 @@ class MolGen(LightningModule):
             device,
         )
 
-        # --- Aggregate CE and FM losses over each target atom set ---
-
-        # Now we simply add the two losses together. This could be weighted in future.
+        # (5) Add the two losses together
+        # Note that these two objectives are disentangled and independent of each other.
         loss = loss_ce + loss_fm
 
         return loss, loss_ce, loss_fm
 
     def compute_source_set_representation(
-        self, x_source, pos_source, atom_count_source, device
-    ):
+        self,
+        x_source: Tensor,
+        pos_source: Tensor,
+        batch_source: Tensor,
+        device: torch.device,
+    ) -> Tensor:
+        """
+        Compute the representation of the source atom sets.
+
+        Args:
+            x_source (Tensor): The atom types of the source atoms. shape: [n_source_atoms]
+            pos_source (Tensor): The positions of the source atoms. shape: [n_source_atoms, 3]
+            batch_source (Tensor): The batch indices of the source atoms. shape: [n_source_atoms]
+            device (torch.device): The device to use for computations.
+
+        Returns:
+            Tensor: The representation of the source atom sets. shape: [batch_size, n_embd]
+        """
         x_source = x_source.to(device)
         pos_source = pos_source.to(device)
+        batch_source = batch_source.to(device)
 
-        # Here we need to reshape the input to [batch_size, max_atom_count, n_embd].
+        # (1) Compute atom counts of the source sets
+        atom_count_source = torch.bincount(batch_source)
+
+        # (2) Reshape the input to [batch_size, max_atom_count, n_embd].
         # This could also be done with sequence packing, but for now we keep it simple.
         # The output tensor is padded with zeros for all source sets with less atoms
         # than the largest source atom set in the batch. The atom mask keeps track of
         # which entries correspond to atoms and padding.
         dim = [len(atom_count_source), atom_count_source.max(), self.hparams.n_embd]
-        x = torch.zeros(dim, device=device)  # [n_molecules, max_atom_count, n_embd]
+        x = torch.zeros(dim, device=device)  # [batch_size, max_atom_count, n_embd]
         context_range = torch.arange(
             atom_count_source.max(), device=atom_count_source.device
         ).unsqueeze(0)
-        atom_mask = context_range < atom_count_source.unsqueeze(1)
+        atom_mask = context_range < atom_count_source.unsqueeze(
+            1
+        )  # [batch_size, max_atom_count]
+        # The attention mask is used in the transformer blocks and is the outer product of the atom mask.
+        attn_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(
+            2
+        )  # [batch_size, max_atom_count, max_atom_count]
+        attn_mask = attn_mask.unsqueeze(1).expand(
+            -1, self.hparams.n_head, -1, -1
+        )  # [batch_size, n_head, max_atom_count, max_atom_count]
 
-        # Embedding layers for atom types and positions
+        # (3) Embed the atom types and positions
         atom_type_embedding = self.atom_type_embedding(
             x_source
         )  # [n_source_atoms, n_embd]
         positional_embedding = self.fourier_embedding_layer(
             pos_source
         )  # [n_source_atoms, n_embd]
-        x[atom_mask] = self.dropout_layer(
+
+        # (4) Combine the atom type embedding and the positional embedding
+        input_embedding = (
             atom_type_embedding + positional_embedding
         )  # [n_source_atoms, n_embd]
-        attn_mask = atom_mask.unsqueeze(1) * atom_mask.unsqueeze(2)
-        attn_mask = attn_mask.unsqueeze(1).expand(-1, self.hparams.n_head, -1, -1)
 
-        # Pass through transformer blocks
+        # (5) Apply the dropout layer
+        input_embedding = self.dropout_layer(
+            input_embedding
+        )  # [n_source_atoms, n_embd]
+
+        # (6) Apply the atom mask to the input embedding
+        x[atom_mask] = input_embedding  # [batch_size, max_atom_count, n_embd]
+
+        # (7) Pass through transformer blocks
         for block in self.transformer_blocks:
             x = block(
                 x, attn_mask=attn_mask, pos=pos_source
-            )  # [n_molecules, max_atom_count, n_embd]
-        x = self.output_layer_norm(x)  # [n_molecules, max_atom_count, n_embd]
+            )  # [batch_size, max_atom_count, n_embd]
+
+        # (8) Apply the output layer normalization
+        x = self.layer_norm_after_transformer(x)  # [batch_size, max_atom_count, n_embd]
 
         # During the forward pass through the trandformer layers, the zero-paddings
         # get filled with non-zero values. This should not be a problem, since these
         # are masked out in the attention mechanism, but before pooling the atom
         # embeddings into a molecule embedding, we re-apply the atom mask.
         # TODO: Investigate where this behavior comes from, maybe it influences batch statistics of the MLP and LayerNorms?
-        x = x * atom_mask.unsqueeze(-1)  # [n_molecules, max_atom_count, n_embd]
+        # (9) Apply the atom mask to the input embedding
+        x = x * atom_mask.unsqueeze(-1)  # [batch_size, max_atom_count, n_embd]
 
-        # Now we can pool the atom embeddings by summation along the max_atom_count dimension
-        if self.hparams.pooling == "add":
-            source_set_representation = x.sum(dim=1)  # [n_molecules, n_embd]
-        else:
-            raise ValueError(f"Unknown pooling method: {self.hparams.pooling}")
+        # (10) Pool the atom embeddings into a molecule embedding
+        source_set_representation = x.sum(dim=1)  # [batch_size, n_embd]
+
         return source_set_representation
 
     def compute_atom_type_loss(
-        self, logits, x_target, batch_target, stop_tokens, device
-    ):
-        logits.to(device)
-        x_target.to(device)
-        batch_target.to(device)
-        stop_tokens.to(device)
+        self,
+        logits: Tensor,
+        x_target: Tensor,
+        batch_target: Tensor,
+        stop_tokens: Tensor,
+        device: torch.device,
+    ) -> Tensor:
+        """
+        Compute the atom type prediction loss.
+
+        Args:
+            logits (Tensor): The logits of the atom type predictions. shape: [n_target_sets, vocab_size]
+            x_target (Tensor): The target atom types. shape: [n_target_atoms]
+            batch_target (Tensor): The batch indices of the target atoms. shape: [n_target_atoms]
+            stop_tokens (Tensor): The stop tokens. shape: [batch_size]
+            device (torch.device): The device to use for computations.
+
+        Returns:
+            Tensor: The atom type prediction loss. shape: [1]
+
+        """
+        logits = logits.to(device)
+        x_target = x_target.to(device)
+        batch_target = batch_target.to(device)
+        stop_tokens = stop_tokens.to(device)
+
         # Atom type prediction is done with a cross-entropy loss.
         # Importantly, since we can have multiple atoms in the target set per source set,
         # we are modelling a target type *distribution*. This distribution is the mean
@@ -271,7 +291,7 @@ class MolGen(LightningModule):
         )  # [n_target_atoms]
         # (2) Take the mean over the one-hot encodings of the target atom types
         # TODO: Using all atom types in not necessary. However, it could be interesting to differentiate atoms with different valences.
-        x_target_prob = one_hot(
+        x_target_prob = F.one_hot(
             x_target.long(), self.hparams.vocab_size
         ).float()  # [n_target_atoms, vocab_size]
         x_target_prob = global_mean_pool(
@@ -298,95 +318,100 @@ class MolGen(LightningModule):
 
     def compute_flow_matching_loss(
         self,
-        x_target,
-        pos_target,
-        batch_target,
-        stop_tokens,
-        source_set_representation,
-        device,
+        x_target: Tensor,
+        pos_target: Tensor,
+        batch_target: Tensor,
+        stop_tokens: Tensor,
+        source_set_representation: Tensor,
+        device: torch.device,
         resampling=4,
-    ):
-        x_target.to(device)
-        pos_target.to(device)
-        batch_target.to(device)
-        stop_tokens.to(device)
-        source_set_representation.to(device)
-        # --- Here comes the flow matching logic ---
+    ) -> Tensor:
+        """
+        Compute the flow matching loss.
 
-        # Map target atom indices to contiguous indices to avoid errors in the aggregation step.
-        _, batch_target_contiguous = torch.unique(
-            batch_target.clone(), return_inverse=True
-        )  # [n_target_atoms]
+        Args:
+            x_target (Tensor): The target atom types. shape: [n_target_atoms]
+            pos_target (Tensor): The target positions. shape: [n_target_atoms, 3]
+            batch_target (Tensor): The batch indices of the target atoms. shape: [n_target_atoms]
+            stop_tokens (Tensor): The stop tokens. shape: [batch_size]
+            source_set_representation (Tensor): The representation of the source sets. shape: [batch_size, n_embd]
+            device (torch.device): The device to use for computations.
+            resampling (int): The number of resampling steps.
+
+        Returns:
+            Tensor: The flow matching loss. shape: [1]
+        """
+        x_target = x_target.to(device)
+        pos_target = pos_target.to(device)
+        batch_target = batch_target.to(device)
+        stop_tokens = stop_tokens.to(device)
+        source_set_representation = source_set_representation.to(device)
 
         # (1) We sample a random position for each non_empty target set
-        optimal_transport = self.hparams.optimal_transport
-        if optimal_transport:
-            # Optional: Optimal transport correction to the random positions
-            _, idx = torch.unique(batch_target * 100 + x_target, return_inverse=True)
-            n_paths = idx.max() + 1
-            pos_random = torch.randn(n_paths, 3, device=device)  # [n_target_sets, 3]
-            pos_random_expanded = pos_random[idx]  # [n_target_atoms, 3]
-            distance = torch.norm(pos_target - pos_random_expanded, dim=1)
+        #     with optimal transport correction.
 
-            min_indices = self.global_argmin_pool(distance, idx)
-            reweighting = global_add_pool(torch.ones_like(distance), idx)
-            pos_target = pos_target[min_indices]
-            pos_random_expanded = pos_random_expanded[min_indices]
-        else:
-            batch_size = len(source_set_representation)
-            n_target_sets = (
-                batch_size - stop_tokens.sum()
-            )  # Number of non-empty target sets
-            n_paths = len(batch_target_contiguous)  # Num atoms in non-empty target sets
-            pos_random = torch.randn(
-                n_target_sets, 3, device=device
-            )  # [n_target_sets, 3]
-            pos_random_expanded = pos_random[
-                batch_target_contiguous
-            ]  # [n_target_atoms, 3]
+        # (1.1) Compute path indices. Atoms of the same type in the same molecule have the same index.
+        _, idx = torch.unique(
+            batch_target * 100 + x_target, return_inverse=True
+        )  # [n_paths]
+        # (1.2) Compute number of paths. Number of paths is the sum of unique atom types over all molecules.
+        n_paths = idx.max() + 1  # [1]
+        # (1.3) Sample random positions for each path.
+        pos_random = torch.randn(n_paths, 3, device=device)  # [n_paths, 3]
+        # (1.4) Expand the random positions to the number of atoms in the target sets.
+        #       This is done by indexing the random positions with the path indices.
+        #       It is necessary to find which atom of the correct type in the target set
+        #       is closest to the randomly sampled positions (optimal transport).
+        pos_random_expanded = pos_random[idx]  # [n_target_atoms, 3]
+        # (1.5) Compute the distance between the target positions and the randomly sampled positions.
+        distance = torch.norm(
+            pos_target - pos_random_expanded, dim=1
+        )  # [n_target_atoms]
+        # (1.6) Find the indices of the minimum distances.
+        #       This returns a tensor of length n_paths pointing to the atom
+        #       in the target set that is closest to the randomly sampled position.
+        #       This returns an index tensor.
+        min_indices = self.global_argmin_pool(distance, idx)  # [n_paths]
+        # (1.7) Compute the reweighting factor. This is the number of atoms of the same type in the target set.
+        reweighting = global_add_pool(torch.ones_like(distance), idx)  # [n_paths]
+        # (1.8) Select the closest target positions given the minimum distance indices.
+        pos_target = pos_target[min_indices]  # [n_paths, 3]
 
-        # (2) We need to expand this to the number of atoms in the target sets, this is
-        # number conditional paths we are regressing in the CFM objective. For each
-        # possible path, we draw a random time step, and compute the interpolated position
-        # between the random and target position.
-        # Interpolation: t = 0 --> pos_random, t=1 --> target_pos
-        interpolation = pos_target - pos_random_expanded  # [n_target_atoms, 3]
+        # (2) Interpolation: t = 0 --> pos_random, t=1 --> target_pos
+        interpolation = pos_target - pos_random  # [n_paths, 3]
 
-        # For each of these paths, we draw k random time steps
+        # (3) For each path, draw k random time steps
         resampling = self.hparams.time_step_resampling
         if self.hparams.time_step_sampling == "uniform":
             time_step = self.sample_timesteps_uniform(
                 n_paths * resampling, device=device
-            )  # [n_target_atoms * k]
+            )  # [n_paths * k]
         elif self.hparams.time_step_sampling == "logit_normal":
             time_step = 0.98 * self.sample_timesteps_logit_normal(
                 n_paths * resampling, device=device, m=0.8, s=1.7
             ) + 0.02 * self.sample_timesteps_uniform(
                 n_paths * resampling, device=device
-            )
+            )  # [n_paths * k]
 
-        # Since we sample k time steps per path, we need to expand all other tensors accordingly
-        interpolation = torch.cat([interpolation for _ in range(resampling)], dim=0)
-        pos_random_expanded = torch.cat(
-            [pos_random_expanded for _ in range(resampling)], dim=0
-        )
+        # (4) Since we sample k time steps per path, we need to expand all other tensors accordingly
+        x_target = x_target[min_indices]
+        x_target = torch.cat([x_target for _ in range(resampling)], dim=0)
+        pos_random = torch.cat([pos_random for _ in range(resampling)], dim=0)
         pos_target = torch.cat([pos_target for _ in range(resampling)], dim=0)
+        interpolation = torch.cat([interpolation for _ in range(resampling)], dim=0)
         source_set_representations = source_set_representation[batch_target]
-        if optimal_transport:
-            source_set_representations = source_set_representations[min_indices]
-            x_target = x_target[min_indices]
-            reweighting = torch.cat([reweighting for _ in range(resampling)], dim=0)
+        source_set_representations = source_set_representations[min_indices]
         source_set_representations = torch.cat(
             [source_set_representations for _ in range(resampling)], dim=0
         )
-        x_target = torch.cat([x_target for _ in range(resampling)], dim=0)
+        reweighting = torch.cat([reweighting for _ in range(resampling)], dim=0)
 
-        # Now we calculate k interpolated positions per path given the sampled time steps
-        interpolated_pos = pos_random_expanded + interpolation * time_step.unsqueeze(
+        # (5) Calculate k interpolated positions per path given the sampled time steps
+        interpolated_pos = pos_random + interpolation * time_step.unsqueeze(
             1
-        )  # [n_target_atoms, 3]
+        )  # [n_paths * k, 3]
 
-        # (3) Now we can compute the vector field output of the flow network at the
+        # (6) Compute the vector field output of the flow network at the
         # interpolated positions and time steps.
         output_fm = self.compute_vector_field(
             x_target,
@@ -394,22 +419,23 @@ class MolGen(LightningModule):
             time_step,
             source_set_representations,
             device,
-        )  # [n_target_atoms, 3]
+        )  # [n_paths * k, 3]
 
-        # (4) The flow matching loss is the MSE between the predicted vector field and
-        # the interpolation (pos_1 - pos_0).
-        # TODO: Maybe we should aggregate this over source atom sets, and not atoms? But weighting each path individually is also a valid strategy
-        loss_fm = torch.mean(
-            (output_fm - interpolation) ** 2, dim=1
-        )  # [n_target_atoms]
-        if optimal_transport:
-            loss_fm = loss_fm * reweighting
-        return loss_fm.mean()
+        # (7) Compute the flow matching loss.
+        # This is the MSE between the predicted vector field and
+        # the interpolation (pos_1 - pos_0) for each path.
+        loss_fm = torch.mean((output_fm - interpolation) ** 2, dim=1)  # [n_paths * k]
 
-    def global_argmin_pool(self, x, batch):
+        # (8) Reweight the loss by the number of atoms of the same type in the target set.
+        loss_fm = loss_fm * reweighting  # [n_paths * k]
+
+        # (9) Return the mean loss over all paths and time steps.
+        return loss_fm.mean()  # [1]
+
+    def global_argmin_pool(self, x: Tensor, batch: Tensor) -> Tensor:
         """
-        Perform a global pooling operation to find the indices of the minimum values
-        for each group in the batch using plain PyTorch (fully vectorized).
+        Performs a global pooling operation to find the indices of the minimum values
+        for each group in the batch.
 
         Args:
             x (Tensor): The input tensor of shape `(n_atoms,)` (e.g., float values).
@@ -433,14 +459,37 @@ class MolGen(LightningModule):
 
         return min_indices
 
-    def sample_timesteps_uniform(self, num_samples, device):
+    def sample_timesteps_uniform(
+        self, num_samples: int, device: torch.device
+    ) -> Tensor:
         """
         Sample timesteps from a uniform distribution.
+
+        Args:
+            num_samples (int): The number of timesteps to sample.
+            device (torch.device): The device to use for computations.
+
+        Returns:
+            Tensor: The sampled timesteps. shape: [num_samples]
         """
         return torch.rand(num_samples, device=device)
 
-    def sample_timesteps_logit_normal(self, num_samples, device, m=0.8, s=1.7):
-        # Logit-Normal Sampling from https://arxiv.org/pdf/2403.03206.pdf
+    def sample_timesteps_logit_normal(
+        self, num_samples: int, device: torch.device, m: float = 0.8, s: float = 1.7
+    ) -> Tensor:
+        """
+        Sample timesteps from a logit-normal distribution.
+        Adapated from https://arxiv.org/pdf/2403.03206.pdf
+
+        Args:
+            num_samples (int): The number of timesteps to sample.
+            device (torch.device): The device to use for computations.
+            m (float): The mean of the logit-normal distribution.
+            s (float): The standard deviation of the logit-normal distribution.
+
+        Returns:
+            Tensor: The sampled timesteps. shape: [num_samples]
+        """
         u = torch.randn(num_samples, device=device) * s + m
         t = 1 / (1 + torch.exp(-u))
         return t
@@ -452,7 +501,7 @@ class MolGen(LightningModule):
         time_step: Tensor,
         source_set_representation: Tensor,
         device: torch.device,
-    ):
+    ) -> Tensor:
         """Method to compute the vector field of the flow matching network.
 
         Args:
@@ -466,58 +515,24 @@ class MolGen(LightningModule):
         Returns:
             Tensor: Vector field of shape [n_atoms, 3]
         """
-        x.to(device)
-        pos_t.to(device)
-        time_step.to(device)
-        source_set_representation.to(device)
+        x = x.to(device)
+        pos_t = pos_t.to(device)
+        time_step = time_step.to(device)
+        source_set_representation = source_set_representation.to(device)
 
-        # (1) Embed time steps with sinusoidal embeddings
-        time_embeddings = create_time_embeddings(
-            time_step, self.hparams.n_embd
-        )  # [n_target_atoms, n_embd]
-
-        # (2) Embed the given positions at time t with Fourier features
-        # TODO: Maybe use weight tying with the other positional embedding layer?
-        positional_embedding = self.fourier_embedding_layer_fm(
-            pos_t
-        )  # [n_target_atoms, n_embd]
-
-        # (3) CFM paths are conditioned on the type of the respective target atoms,
+        # CFM paths are conditioned on the type of the respective target atoms,
         # so we need to include this information in the flow matching condition.
         target_atom_type_embeddings = self.atom_type_embedding(
             x
         )  # [n_target_atoms, n_embd]
 
-        if self.hparams.fm_conditioning == "add":
-            # (4) Add embeddings up and predict the vector field
-            x = (
-                positional_embedding
-                + time_embeddings
-                + target_atom_type_embeddings
-                + source_set_representation
-            )  # [n_target_atoms, n_embd]
-            output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
+        condition = (
+            target_atom_type_embeddings + source_set_representation
+        )  # [n_target_atoms, n_embd]
 
-        elif self.hparams.fm_conditioning == "concat":
-            x = positional_embedding + time_embeddings
-            condition = (
-                target_atom_type_embeddings + source_set_representation
-            )  # [n_target_atoms, n_embd]
-            x = torch.cat([x, condition], dim=-1)  # [n_target_atoms, 2*n_embd]
-            output_fm = self.flow_matching_mlp(x)  # [n_target_atoms, 3]
-
-        elif self.hparams.fm_conditioning == "ada":
-            condition = (
-                target_atom_type_embeddings + source_set_representation
-            )  # [n_target_atoms, n_embd]
-            output_fm = self.ada_mlp(
-                pos_t, time_step, condition
-            )  # [n_target_atoms, 2*n_embd]
-
-        else:
-            raise ValueError(
-                f"Unknown fm_conditioning method: {self.hparams.fm_conditioning}"
-            )
+        output_fm = self.ada_mlp(
+            pos_t, time_step, condition
+        )  # [n_target_atoms, n_embd]
 
         return output_fm
 
@@ -574,15 +589,25 @@ class MolGen(LightningModule):
 
         return [optimizer], [scheduler]
 
-    def on_before_optimizer_step(self, optimizer, optimizer_idx=None) -> None:
-        # Compute the gradient norm before clipping
+    def on_before_optimizer_step(
+        self, optimizer: Optimizer, optimizer_idx: int = None
+    ) -> None:
+        """
+        Compute the gradient norm before clipping.
+
+        Args:
+            optimizer (Optimizer): The optimizer to use.
+            optimizer_idx (int): The index of the optimizer.
+
+        Returns:
+            None
+        """
         grad_norm = 0
         for param in self.parameters():
             if param.grad is not None:
                 grad_norm += param.grad.norm(2).item() ** 2
         grad_norm = grad_norm**0.5
 
-        # Log the gradient norm
         self.log(
             "train/grad_norm",
             grad_norm,
@@ -661,41 +686,44 @@ class MolGen(LightningModule):
 
         return loss
 
-    def predict_step(
-        self, batch: Data, batch_idx: int = 0
-    ) -> Union[Tensor, tuple[Tensor, Tensor]]:
-        return self(batch)
-
     @torch.no_grad()
     def generate(
         self,
         batch_size: int = 1,
         max_atoms: int = 100,
-        temperature: float = 1.0,
-        top_k: int = None,
         num_time_steps: int = 30,
         device: torch.device = torch.device("cuda"),
-    ):
-        # Initialize starting atom type with all carbon atoms
-        if self.hparams.vocab_size < 7:
-            start_token = 2  # Carbon atom type
-        else:
-            start_token = 6  # Carbon atom type
+    ) -> tuple[Tensor, Tensor, Tensor]:
+        """
+        Generate a molecule using the flow matching network.
+
+        Args:
+            batch_size (int): The number of molecules to generate.
+            max_atoms (int): The maximum number of atoms to generate.
+            num_time_steps (int): The number of time steps to use for the flow matching.
+            device (torch.device): The device to use for computations.
+
+        Returns:
+            tuple[Tensor, Tensor, Tensor]: The generated molecule, its positions, and the batch indices.
+        """
+        # (1) Initialize all starting atom types with carbon atoms
+        start_token = 2  # Carbon atom type
         x = (
             torch.ones(size=(batch_size,), dtype=torch.long, device=device)
             * start_token
-        )  # 6 for carbon
-        # Initialize starting position with a random one
+        )
+        # (2) Initialize starting positions with random ones
         pos = torch.randn(batch_size, 3, device=device)
-        # Initialize the batch source tensor
+        # (3) Initialize the batch source tensor
         batch_source = torch.arange(batch_size, device=device)
-        # Create a mask for the stop tokens that will be used to track which molecules have a stop token
+        # (4) Create a mask for the stop tokens that will be used to track which molecules have a stop token
         stop_token_mask = torch.zeros(batch_size, device=device, dtype=torch.bool)
-        # Create a tensor of molecule indices that do not have a stop token
+        # (5) Create a tensor of molecule indices that do not have a stop token
         active_mol_idx = torch.arange(batch_size, device=device)[~stop_token_mask]
 
+        # (6) Iterate over the maximum number of atoms to generate
         for i in range(max_atoms):
-            # Compute source set representation
+            # (6.1) Compute source set representation
             expanded_mask = torch.isin(batch_source, active_mol_idx)
             masked_x = x[expanded_mask]
             masked_pos = pos[expanded_mask]
@@ -703,35 +731,31 @@ class MolGen(LightningModule):
             _, batch_source_remapped = torch.unique(
                 masked_batch_source.clone(), return_inverse=True
             )
-            atom_count = torch.bincount(batch_source_remapped)
             source_set_representation = self.compute_source_set_representation(
-                masked_x, masked_pos, atom_count, device
+                masked_x, masked_pos, batch_source_remapped, device
             )  # [active_mol_count, n_embd]
-            # Compute logits
-            logits = self.linear_output_head(
+
+            # (6.2) Compute logits
+            logits = self.atom_type_prediction_head(
                 source_set_representation
             )  # [active_mol_count, vocab_size]
-            # Optionally crop the logits to only the top k options
-            if top_k is not None:
-                v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
-                logits[logits < v[:, [-1]]] = -float("Inf")
-            # Compute probabilities
-            probabilities = F.softmax(
-                logits / temperature, dim=-1
-            )  # [active_mol_count, vocab_size]
-            # Sample next atom types from the resulting distribution
-            # x_next = torch.multinomial(
-            #     probabilities, num_samples=1
-            # ).flatten()  # [active_mol_count]
-            # Create a mask on the active molecules given the newly predicted atom types
+
+            # (6.3) Compute probabilities
+            probabilities = F.softmax(logits, dim=-1)  # [active_mol_count, vocab_size]
+
+            # (6.4) Sample next atom types from the resulting distribution
             x_next = torch.argmax(probabilities, dim=1)
+
+            # (6.5) Create a mask on the active molecules given the newly predicted atom types
             x_next_mask = x_next == 0  # [active_mol_count]
-            # probabilities[:, 0] = 0.0  # Set stop token probability to zero
+
             print(f"Generating atom {i + 2} for {(~x_next_mask).sum()} molecules.")
-            # Update the stop token mask with the newly predicted stop tokens
+
+            # (6.6) Update the stop token mask with the newly predicted stop tokens
             stop_token_mask[active_mol_idx] += x_next_mask  # [batch_size]
-            # Count the number of stop tokens and break if all molecules have a stop token
-            # also update the active molecule indices and count
+
+            # (6.7) Count the number of stop tokens and break if all molecules
+            # have a stop token also update the active molecule indices and count
             n_stop_tokens = stop_token_mask.sum()
             active_mol_idx = torch.arange(batch_size, device=device)[
                 ~stop_token_mask
@@ -739,13 +763,15 @@ class MolGen(LightningModule):
             if n_stop_tokens == batch_size:
                 break
 
-            # Select only the source set representations for the active molecules
+            # (6.8) Select only the source set representations for the active molecules
             x_next = x_next[~x_next_mask]
             source_set_representation = source_set_representation[~x_next_mask]
+            # (6.9) Calculate the positions of the newly predicted atoms with flow matching
             pos_next = self.calculate_positions(
                 x_next, source_set_representation, num_time_steps, device
             )
 
+            # (6.10) Update the x, pos, and batch source tensors
             updated_x = []
             updated_pos = []
             updated_batch = []
@@ -785,18 +811,30 @@ class MolGen(LightningModule):
 
     def calculate_positions(
         self,
-        x_next,
-        source_set_representation,
-        num_time_steps,
-        device,
-        integration_method="euler",
-    ):
+        x_next: Tensor,
+        source_set_representation: Tensor,
+        num_time_steps: int,
+        device: torch.device,
+        integration_method: str = "euler",
+    ) -> Tensor:
+        """
+        Method to calculate the positions of the newly predicted atoms with flow matching.
 
-        # Initialize next atoms' position with a random position
+        Args:
+            x_next (Tensor): The atom types of the newly predicted atoms. shape: [n_atoms, 1]
+            source_set_representation (Tensor): The representation of the source sets. shape: [n_atoms, n_embd]
+            num_time_steps (int): The number of time steps to use for the flow matching.
+            device (torch.device): The device to use for computations.
+            integration_method (str): The integration method to use for the flow matching.
+
+        Returns:
+            Tensor: The positions of the newly predicted atoms. shape: [n_atoms, 3]
+        """
+        # (1) Initialize next atoms' position with a random position
         pos_next = torch.randn(x_next.shape[0], 3, device=device)
 
-        # Find position of the atoms via flow matching
         if integration_method == "euler":
+            # (2) Find position of the atoms via flow matching using Euler method
             for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
                 time_step = time_step.expand(x_next.shape[0])
                 delta_pos = (
@@ -813,7 +851,7 @@ class MolGen(LightningModule):
                 pos_next = pos_next + delta_pos
 
         elif integration_method == "rk4":
-            # Find position of the atoms via flow matching using RK4 method
+            # (2) Find position of the atoms via flow matching using RK4 method
             for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
                 time_step = time_step.expand(x_next.shape[0])
                 dt = 1 / num_time_steps  # Time step size
