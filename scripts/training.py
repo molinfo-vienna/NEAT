@@ -55,8 +55,6 @@ def training(args: argparse.Namespace) -> None:
     # MODEL_NUMBER = 87
     # MODEL_PATH = f"{ROOT}/logs/{MODEL.__name__}/version_{MODEL_NUMBER}/"
     # model = load_model_from_path(MODEL_PATH, MODEL)
-    # model.hparams.learning_rate = 1e-5
-    # model.configure_optimizers()
     tb_logger = TensorBoardLogger(
         os.path.join(ROOT, "logs"),
         # "/data/local/MolGen",
@@ -81,7 +79,6 @@ def training(args: argparse.Namespace) -> None:
         every_n_epochs=50,  # Check every epoch
     )
     callbacks = [
-        # CurriculumLearningScheduler(1, 25, 1.01),
         GenerationMonitor(num_samples=10000, every_n_epochs=50),
         checkpoint_val_loss,
         checkpoint_validity,

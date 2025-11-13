@@ -15,7 +15,7 @@ class GenerationMonitor(Callback):
     ) -> None:
         if (
             trainer.current_epoch % self.every_n_epochs != 0
-            #or trainer.current_epoch == 0
+            or trainer.current_epoch == 0
         ):
             return
         x, pos, batch = pl_module.generate(batch_size=self.num_samples)
