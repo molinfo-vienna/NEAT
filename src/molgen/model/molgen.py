@@ -18,10 +18,7 @@ from torch_geometric.data import Data
 from torch_geometric.nn.pool import global_add_pool, global_mean_pool
 
 from .attention import Block
-from .positional_encoding import (
-    AxialRotaryPositionEncoding,
-    FourierPositionEncoding
-)
+from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
 from .simple_mlp import SimpleMLPAdaLN
 
 
@@ -621,6 +618,13 @@ class MolGen(LightningModule):
         loss, loss_ce, loss_fm = self(batch)
 
         return loss, loss_ce, loss_fm
+
+    def on_train_start(self) -> None:
+        """Initialization of the logger"""
+        self.logger.log_hyperparams(
+            self.hparams,
+            {"train/train_loss": torch.inf, "val/val_loss": torch.inf},
+        )
 
     def training_step(self, batch: Data, batch_idx: int) -> Tensor:
         """Training step and logging"""
