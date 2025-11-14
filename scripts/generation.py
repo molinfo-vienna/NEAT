@@ -39,7 +39,11 @@ def generate(args: argparse.Namespace) -> None:
 
     # Checkpoints path (find the first .ckpt file in the checkpoints folder)
     checkpoints_dir = os.path.join(params["checkpoints_path"], "checkpoints")
-    pt_files = [f for f in os.listdir(checkpoints_dir) if f.endswith(".ckpt")]
+    pt_files = [
+        f
+        for f in os.listdir(checkpoints_dir)
+        if f.endswith(".ckpt") and f.startswith("best-val-loss")
+    ]
     if not pt_files:
         raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")
 
@@ -56,8 +60,6 @@ def generate(args: argparse.Namespace) -> None:
         x, pos, batch = model.generate(
             batch_size=params["num_molecules"],
             max_atoms=params["max_atoms"],
-            temperature=params["temperature"],
-            top_k=params["top_k"],
             num_time_steps=params["num_time_steps"],
         )
 
