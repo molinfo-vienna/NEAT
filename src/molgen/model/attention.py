@@ -16,6 +16,7 @@ class MaskedBidirectionalAttention(nn.Module):
         n_head: int,
         dropout: float,
         bias: bool,
+        bias_zero: bool,
         pos_embedder: Optional[nn.Module] = None,
     ):
         super().__init__()
@@ -23,7 +24,7 @@ class MaskedBidirectionalAttention(nn.Module):
         # key, query, value projections for all heads, but in a batch
         self.c_attn = nn.Linear(n_embd, 3 * n_embd, bias=bias)
         # output projection
-        self.c_proj = nn.Linear(n_embd, n_embd, bias=bias)
+        self.c_proj = nn.Linear(n_embd, n_embd, bias=bias_zero)
         # regularization
         self.attn_dropout = nn.Dropout(dropout)
         self.resid_dropout = nn.Dropout(dropout)
@@ -109,7 +110,7 @@ class Block(nn.Module):
         super().__init__()
         self.ln_1 = nn.LayerNorm(n_embd, bias=bias_zero)
         self.attn = MaskedBidirectionalAttention(
-            n_embd, n_head, dropout, bias, pos_embedder
+            n_embd, n_head, dropout, bias, bias_zero, pos_embedder
         )
         self.ln_2 = nn.LayerNorm(n_embd, bias=bias_zero)
         self.mlp = MLP(n_embd, dropout, bias_zero)
