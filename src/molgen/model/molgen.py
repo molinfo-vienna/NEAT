@@ -25,6 +25,7 @@ from .simple_mlp import SimpleMLPAdaLN
 class MolGen(LightningModule):
     def __init__(self, **params) -> None:
         super(MolGen, self).__init__()
+        self.hparams.setdefault("noise_std", 1.0)
         self.save_hyperparameters()
 
         # Atom type embedding layer
@@ -354,7 +355,9 @@ class MolGen(LightningModule):
         # (1.2) Compute number of paths. Number of paths is the sum of unique atom types over all molecules.
         n_paths = idx.max() + 1  # [1]
         # (1.3) Sample random positions for each path.
-        pos_random = torch.randn(n_paths, 3, device=device)  # [n_paths, 3]
+        pos_random = self.hparams.noise_std * torch.randn(
+            n_paths, 3, device=device
+        )  # [n_paths, 3]
         # (1.4) Expand the random positions to the number of atoms in the target sets.
         #       This is done by indexing the random positions with the path indices.
         #       It is necessary to find which atom of the correct type in the target set
@@ -717,7 +720,7 @@ class MolGen(LightningModule):
             * start_token
         )
         # (2) Initialize starting positions with random ones
-        pos = torch.randn(batch_size, 3, device=device)
+        pos = self.hparams.noise_std * torch.randn(batch_size, 3, device=device)
         # (3) Initialize the batch source tensor
         batch_source = torch.arange(batch_size, device=device)
         # (4) Create a mask for the stop tokens that will be used to track which molecules have a stop token
@@ -835,7 +838,9 @@ class MolGen(LightningModule):
             Tensor: The positions of the newly predicted atoms. shape: [n_atoms, 3]
         """
         # (1) Initialize next atoms' position with a random position
-        pos_next = torch.randn(x_next.shape[0], 3, device=device)
+        pos_next = self.hparams.noise_std * torch.randn(
+            x_next.shape[0], 3, device=device
+        )
 
         if integration_method == "euler":
             # (2) Find position of the atoms via flow matching using Euler method
