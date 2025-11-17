@@ -49,7 +49,6 @@ class MolGen(LightningModule):
                     self.hparams.n_head,
                     self.hparams.dropout,
                     self.hparams.bias,
-                    self.hparams.bias_zero,
                     (
                         AxialRotaryPositionEncoding(
                             embed_dim=self.hparams.n_embd,
@@ -65,7 +64,7 @@ class MolGen(LightningModule):
 
         # Layer normalization after the transformer blocks
         self.layer_norm_after_transformer = nn.LayerNorm(
-            self.hparams.n_embd, bias=self.hparams.bias_zero
+            self.hparams.n_embd, bias=False
         )
 
         # Linear prediction head for atom type prediction
