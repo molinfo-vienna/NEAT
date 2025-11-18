@@ -74,7 +74,7 @@ if __name__ == "__main__":
             f"Number of valid molecules: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)\n"
         )
         f.write(
-            f"Number of valid x unique molecules: {n_valid} out of {len(mols)} ({n_unique/len(mols)*100:.2f}%)\n"
+            f"Number of valid x unique molecules: {n_unique} out of {len(mols)} ({n_unique/len(mols)*100:.2f}%)\n"
         )
         f.write(f"Data set: {params['data_set']}\n")
         f.write(f"RDKit version: {rdkit.__version__}\n")
