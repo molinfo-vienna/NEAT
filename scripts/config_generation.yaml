@@ -1,5 +1,5 @@
-checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_98
-output_path: /home/rjacob/MolGen/data/generated_98
+checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_85
+output_path: /home/rjacob/MolGen/data/generated_85
 data_set: QM9
 num_molecules: 10000
 max_atoms: 100
