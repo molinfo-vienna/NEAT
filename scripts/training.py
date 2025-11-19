@@ -10,7 +10,6 @@ from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 
 from molgen.dataset import DataModule
 from molgen.model import GenerationMonitor, MolGen
-from molgen.model.utils import load_model_from_path
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -50,11 +49,34 @@ def training(args: argparse.Namespace) -> None:
 
     accumulate_grad_batches = params.pop("accumulate_grad_batches")
 
-    # Initialize and train model
-    model = MODEL(**params)
-    # MODEL_NUMBER = 87
-    # MODEL_PATH = f"{ROOT}/logs/{MODEL.__name__}/version_{MODEL_NUMBER}/"
-    # model = load_model_from_path(MODEL_PATH, MODEL)
+    #------- Model initialization -----------------------------
+
+    # Initialize a new model instance...
+    # model = MODEL(**params)
+
+    # ... OR load and fine-tune model
+    MODEL_NUMBER = 85
+    MODEL_PATH = f"{ROOT}/logs/{MODEL.__name__}/version_{MODEL_NUMBER}/"
+    checkpoints_dir = os.path.join(MODEL_PATH, "checkpoints")
+    pt_files = [
+        f
+        for f in os.listdir(checkpoints_dir)
+        if f.endswith(".ckpt") and f.startswith("best-val-validity")
+    ]
+    if not pt_files:
+        raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")
+
+    CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
+    print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
+
+    # CAREFUL:
+    # The trainer.fit() method needs to be called with the right arguments,
+    # depending on whether we are initializing a new model or loading one.
+
+    #----------------------------------------------------------
+
     tb_logger = TensorBoardLogger(
         os.path.join(ROOT, "logs"),
         # "/data/local/MolGen",
@@ -97,7 +119,9 @@ def training(args: argparse.Namespace) -> None:
         gradient_clip_algorithm="norm",
         precision="bf16-mixed",
     )
-    trainer.fit(model=model, datamodule=datamodule)
+
+    # trainer.fit(model=model, datamodule=datamodule)  # For new model training
+    trainer.fit(model=model, datamodule=datamodule, ckpt_path=CHECKPOINTS_PATH)  # For fine-tuning
 
 
 def parseArgs() -> argparse.Namespace:
