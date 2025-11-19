@@ -42,7 +42,7 @@ def generate(args: argparse.Namespace) -> None:
     pt_files = [
         f
         for f in os.listdir(checkpoints_dir)
-        if f.endswith(".ckpt") and f.startswith("best-val-loss")
+        if f.endswith(".ckpt") and f.startswith("best-val-validity")
     ]
     if not pt_files:
         raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")

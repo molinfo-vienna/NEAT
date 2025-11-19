@@ -95,7 +95,7 @@ def training(args: argparse.Namespace) -> None:
         accumulate_grad_batches=accumulate_grad_batches,
         gradient_clip_val=1.0,
         gradient_clip_algorithm="norm",
-        # precision="bf16-mixed",
+        precision="bf16-mixed",
     )
     trainer.fit(model=model, datamodule=datamodule)
 
