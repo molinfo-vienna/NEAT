@@ -8,6 +8,7 @@ from rdkit.Chem import Draw, MolToSmiles, rdDepictor
 from rdkit.Chem.AllChem import RemoveHs
 
 from molgen.model.molecule_builder import MoleculeBuilder
+from molgen.utils.edm_metrics import edm_metrics
 
 RESOLUTION = 400
 NUM_MOLECULES_PLOTTED = 100
@@ -64,17 +65,26 @@ if __name__ == "__main__":
 
     builder = MoleculeBuilder()
     x, pos, batch = builder.load_tensor_from_file(params["data_path"])
+
+    atom_stability, mol_stability, edm_validity, edm_valid_uniq, edm_invalid_idxs = (
+        edm_metrics(x, pos, batch, "qm9")
+    )
+
     mols = builder.generate_rdkit_molecules(x, pos, batch)
 
     n_valid = compute_validity(mols)
     n_unique = compute_uniqueness(mols)
 
     with open(os.path.join(params["data_path"], "evaluation_results.txt"), "w") as f:
+        f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
+        f.write(f"Molecule stability: {mol_stability*100:.2f}%\n")
+        f.write(f"Lookup valid: {edm_validity*100:.2f}%\n")
+        f.write(f"Lookup valid & unique: {edm_valid_uniq*100:.2f}%\n")
         f.write(
-            f"Number of valid molecules: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)\n"
+            f"xyz2mol valid: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)\n"
         )
         f.write(
-            f"Number of valid x unique molecules: {n_unique} out of {len(mols)} ({n_unique/len(mols)*100:.2f}%)\n"
+            f"xyz2mol valid x unique molecules: {n_unique} out of {len(mols)} ({n_unique/len(mols)*100:.2f}%)\n"
         )
         f.write(f"Data set: {params['data_set']}\n")
         f.write(f"RDKit version: {rdkit.__version__}\n")
