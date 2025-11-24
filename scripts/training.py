@@ -44,6 +44,7 @@ def training(args: argparse.Namespace) -> None:
         DATA_ROOT,
         batch_size=params["batch_size"],
         source_target_split=params["source_target_split"],
+        noise_std=params["noise_std"],
         num_workers=8,
     )
     datamodule.setup()
@@ -52,9 +53,24 @@ def training(args: argparse.Namespace) -> None:
 
     # Initialize and train model
     model = MODEL(**params)
-    # MODEL_NUMBER = 87
+    # MODEL_NUMBER = 116
     # MODEL_PATH = f"{ROOT}/logs/{MODEL.__name__}/version_{MODEL_NUMBER}/"
-    # model = load_model_from_path(MODEL_PATH, MODEL)
+
+    # # Checkpoints path (find the first .ckpt file in the checkpoints folder)
+    # checkpoints_dir = os.path.join(MODEL_PATH, "checkpoints")
+    # pt_files = [
+    #     f
+    #     for f in os.listdir(checkpoints_dir)
+    #     if f.endswith(".ckpt") and f.startswith("best-val-validity")
+    # ]
+    # if not pt_files:
+    #     raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")
+
+    # CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
+    # print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
+
     tb_logger = TensorBoardLogger(
         os.path.join(ROOT, "logs"),
         # "/data/local/MolGen",
@@ -97,6 +113,7 @@ def training(args: argparse.Namespace) -> None:
         gradient_clip_algorithm="norm",
         precision="bf16-mixed",
     )
+    # trainer.fit(model=model, datamodule=datamodule, ckpt_path=CHECKPOINTS_PATH)
     trainer.fit(model=model, datamodule=datamodule)
 
 
