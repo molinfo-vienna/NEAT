@@ -52,24 +52,24 @@ def training(args: argparse.Namespace) -> None:
     #------- Model initialization -----------------------------
 
     # Initialize a new model instance...
-    # model = MODEL(**params)
+    model = MODEL(**params)
 
     # ... OR load and fine-tune model
-    MODEL_NUMBER = 85
-    MODEL_PATH = f"{ROOT}/logs/{MODEL.__name__}/version_{MODEL_NUMBER}/"
-    checkpoints_dir = os.path.join(MODEL_PATH, "checkpoints")
-    pt_files = [
-        f
-        for f in os.listdir(checkpoints_dir)
-        if f.endswith(".ckpt") and f.startswith("best-val-validity")
-    ]
-    if not pt_files:
-        raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")
+    # MODEL_NUMBER = 85
+    # MODEL_PATH = f"{ROOT}/logs/{MODEL.__name__}/version_{MODEL_NUMBER}/"
+    # checkpoints_dir = os.path.join(MODEL_PATH, "checkpoints")
+    # pt_files = [
+    #     f
+    #     for f in os.listdir(checkpoints_dir)
+    #     if f.endswith(".ckpt") and f.startswith("best-val-validity")
+    # ]
+    # if not pt_files:
+    #     raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")
 
-    CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
-    print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
+    # CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
+    # print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
 
     # CAREFUL:
     # The trainer.fit() method needs to be called with the right arguments,
@@ -79,7 +79,6 @@ def training(args: argparse.Namespace) -> None:
 
     tb_logger = TensorBoardLogger(
         os.path.join(ROOT, "logs"),
-        # "/data/local/MolGen",
         name=f"{MODEL.__name__}",
         default_hp_metric=False,
     )
@@ -108,7 +107,7 @@ def training(args: argparse.Namespace) -> None:
         LearningRateMonitor(logging_interval="epoch"),
     ]
     trainer = Trainer(
-        devices=1,
+        devices=[0],
         max_epochs=params["max_epochs"],
         accelerator="gpu",
         logger=tb_logger,
@@ -116,12 +115,11 @@ def training(args: argparse.Namespace) -> None:
         callbacks=callbacks,
         accumulate_grad_batches=accumulate_grad_batches,
         gradient_clip_val=1.0,
-        gradient_clip_algorithm="norm",
         precision="bf16-mixed",
     )
 
-    # trainer.fit(model=model, datamodule=datamodule)  # For new model training
-    trainer.fit(model=model, datamodule=datamodule, ckpt_path=CHECKPOINTS_PATH)  # For fine-tuning
+    trainer.fit(model=model, datamodule=datamodule)  # For new model training
+    # trainer.fit(model=model, datamodule=datamodule, ckpt_path=CHECKPOINTS_PATH)  # For fine-tuning
 
 
 def parseArgs() -> argparse.Namespace:
