@@ -727,11 +727,11 @@ class MolGen(LightningModule):
         Returns:
             tuple[Tensor, Tensor, Tensor]: The generated molecule, its positions, and the batch indices.
         """
-        # # (1) Initialize all starting atom types with carbon atoms
+        # (1) Sample initial atoms from the prior distribution of atom types in QM9
         dist = torch.tensor(
             [0.0000, 0.5109, 0.3517, 0.0580, 0.0780, 0.0014], device=device
         )
-        x = torch.multinomial(dist, batch_size, replacement=True)
+        x = torch.multinomial(dist, batch_size, replacement=True)  # [batch_size]
         # (2) Initialize starting positions with random ones
         pos = self.hparams.noise_std * torch.randn(batch_size, 3, device=device)
         # (3) Initialize the batch source tensor
