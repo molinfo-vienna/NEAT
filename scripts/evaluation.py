@@ -66,7 +66,7 @@ if __name__ == "__main__":
     builder = MoleculeBuilder()
     x, pos, batch = builder.load_tensor_from_file(params["data_path"])
 
-    atom_stability, mol_stability, edm_validity, edm_valid_uniq, edm_invalid_idxs = (
+    atom_stability, mol_stability, edm_validity, edm_uniqueness, edm_invalid_idxs = (
         edm_metrics(x, pos, batch, "qm9")
     )
 
@@ -78,13 +78,13 @@ if __name__ == "__main__":
     with open(os.path.join(params["data_path"], "evaluation_results.txt"), "w") as f:
         f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
         f.write(f"Molecule stability: {mol_stability*100:.2f}%\n")
-        f.write(f"Lookup valid: {edm_validity*100:.2f}%\n")
-        f.write(f"Lookup valid & unique: {edm_valid_uniq*100:.2f}%\n")
+        f.write(f"EDM valid: {edm_validity*100:.2f}%\n")
+        f.write(f"EDM unique: {edm_uniqueness*100:.2f}%\n")
         f.write(
             f"xyz2mol valid: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)\n"
         )
         f.write(
-            f"xyz2mol valid x unique molecules: {n_unique} out of {len(mols)} ({n_unique/len(mols)*100:.2f}%)\n"
+            f"xyz2mol unique molecules: {n_unique} out of {n_valid} ({n_unique/n_valid*100:.2f}%)\n"
         )
         f.write(f"Data set: {params['data_set']}\n")
         f.write(f"RDKit version: {rdkit.__version__}\n")

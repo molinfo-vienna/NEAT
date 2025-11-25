@@ -19,6 +19,14 @@ class MoleculeBuilder:
             4: "O",  # Oxygen
             5: "F",  # Fluorine
         }
+        # Only for QUETZAL
+        # self.atom_type_to_element = {
+        #     1: "H",  # Hydrogen
+        #     6: "C",  # Carbon
+        #     7: "N",  # Nitrogen
+        #     8: "O",  # Oxygen
+        #     9: "F",  # Fluorine
+        # }
 
     def load_tensor_from_file(
         self, files_path: str
