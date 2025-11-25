@@ -1,6 +1,6 @@
-checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_9
-output_path: /home/rjacob/MolGen/data/generated_9
-data_set: QM9_small_vocab
+checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_98
+output_path: /home/rjacob/MolGen/data/generated_98
+data_set: QM9
 num_molecules: 10000
 max_atoms: 100
-num_time_steps: 30
+num_time_steps: 60
