@@ -5,6 +5,7 @@ __pycache__/
 .env
 .pytest_cache
 .ipynb_checkpoints
+*.ipynb
 *.pyc
 *.tar.gz
 *.egg-info
