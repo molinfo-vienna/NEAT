@@ -81,10 +81,10 @@ if __name__ == "__main__":
         f.write(f"EDM valid: {edm_validity*100:.2f}%\n")
         f.write(f"EDM unique: {edm_uniqueness*100:.2f}%\n")
         f.write(
-            f"xyz2mol valid: {n_valid} out of {len(mols)} ({n_valid/len(mols)*100:.2f}%)\n"
+            f"xyz2mol valid: {n_valid/len(mols)*100:.2f}%\n"
         )
         f.write(
-            f"xyz2mol unique molecules: {n_unique} out of {n_valid} ({n_unique/n_valid*100:.2f}%)\n"
+            f"xyz2mol unique: {n_unique/n_valid*100:.2f}%\n"
         )
         f.write(f"Data set: {params['data_set']}\n")
         f.write(f"RDKit version: {rdkit.__version__}\n")
