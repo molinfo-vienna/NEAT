@@ -19,7 +19,7 @@ class MoleculeBuilder:
             4: "O",  # Oxygen
             5: "F",  # Fluorine
         }
-        # Only for QUETZAL
+        # Only for QUETZAL (different vocabulary)
         # self.atom_type_to_element = {
         #     1: "H",  # Hydrogen
         #     6: "C",  # Carbon
@@ -88,13 +88,21 @@ class MoleculeBuilder:
             x_mol = x[mask]
             pos_mol = pos[mask]
 
-            try:
-                xyz_block = self.create_xyz_block(x_mol, pos_mol)
-                mol = MolFromXYZBlock(xyz_block)
-                rdDetermineBonds.DetermineBonds(mol, charge=0)
-                mols.append(mol)
-            except Exception as e:
-                logging.warning(f"Error processing molecule: {e}")
-                mols.append(None)
+            xyz_block = self.create_xyz_block(x_mol, pos_mol)
+            mol = MolFromXYZBlock(xyz_block)
+            valid_charge = False
+            for charge in [0, 1, -1, 2, -2, 3, 4, 5, -3]:
+                try:
+                    rdDetermineBonds.DetermineBonds(mol, charge=charge)
+                    valid_charge = True
+                    break
+                except ValueError:
+                    continue
+            if not valid_charge:
+                logging.warning(
+                    f"Could not determine bonds for molecule in batch {batch_id} with any tested charge."
+                )
+                mol = None
+            mols.append(mol)
 
         return mols

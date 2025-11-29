@@ -845,7 +845,7 @@ def edm_metrics(x, pos, batch, dataset):
     for i in tqdm(range(count_mol_total), desc="EDM metrics calculation"):
         positions = pos[batch == i]
         atom_type = x[batch == i] - 1
-        # Only for QUETZAl
+        # Only for QUETZAL (different vocabulary)
         # atom_type = torch.tensor([mapping[int(atom_type)] for atom_type in x[batch == i]])
 
         is_stable, nr_stable, total = check_stability(
