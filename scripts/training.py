@@ -43,6 +43,7 @@ def training(args: argparse.Namespace) -> None:
         DATA_ROOT,
         batch_size=params["batch_size"],
         source_target_split=params["source_target_split"],
+        noise_std=params["noise_std"],
         num_workers=8,
     )
     datamodule.setup()

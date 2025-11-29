@@ -8,10 +8,10 @@ lr_decay_epochs: 10000
 lr_min_ratio: 0.1
 lr_warmup_epochs: 50
 max_epochs: 10000
-n_embd: 768
+n_embd: 1024
 n_embd_fm: 1536
-n_head: 12
-n_layer: 12
+n_head: 16
+n_layer: 16
 n_layers_fm: 6
 noise_std: 1.4
 rope: false

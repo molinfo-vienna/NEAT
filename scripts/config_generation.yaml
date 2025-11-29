@@ -3,4 +3,4 @@ output_path: /home/rjacob/MolGen/data/generated_85
 data_set: QM9
 num_molecules: 10000
 max_atoms: 100
-num_time_steps: 30
+num_time_steps: 60

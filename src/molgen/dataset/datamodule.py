@@ -3,13 +3,15 @@ import functools
 from lightning import LightningDataModule
 from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
+import torch
+from scipy.optimize import linear_sum_assignment
 
 from .augmentation import RandomRotationAugmentation
 from .dataset import DataSet
 from .splitting import SourceTargetSplitter
 
 
-def batch_transform(batch, source_target_split):
+def batch_transform(batch, source_target_split, noise_std):
     # Apply your batch-level augmentation logic here
     # For example, add random noise to all node features in the batch
     # data augmentation by random rotation
@@ -35,12 +37,25 @@ def batch_transform(batch, source_target_split):
     batch.batch_target = batch_target
     batch.stop_tokens = stop_tokens
 
+    batch_target = batch_target.long()
+    pos_random = noise_std * torch.randn_like(pos_target)
+    target_idx = torch.unique(batch_target)
+    for idx in target_idx:
+        cost_matrix = torch.cdist(
+            pos_target[batch_target == idx], pos_random[batch_target == idx], p=2
+        )
+        _, prior_idx = linear_sum_assignment(cost_matrix.cpu())
+
+        # reorder prior to according to optimal assignment
+        pos_random[batch_target == idx] = pos_random[batch_target == idx][prior_idx]
+    batch.pos_random = pos_random
+
     return batch
 
 
-def custom_collate_fn(batch, source_target_split):
+def custom_collate_fn(batch, source_target_split, noise_std):
     batch = Batch.from_data_list(batch)
-    return batch_transform(batch, source_target_split)
+    return batch_transform(batch, source_target_split, noise_std)
 
 
 class DataModule(LightningDataModule):
@@ -62,16 +77,20 @@ class DataModule(LightningDataModule):
         training_data_dir: str,
         batch_size: int = 32,
         source_target_split: str = "cyclic",
+        noise_std: float = 1.4,
         num_workers: int = 1,
     ) -> None:
         super(DataModule, self).__init__()
         self.training_data_dir = training_data_dir
         self.batch_size = batch_size
         self.source_target_split = source_target_split
+        self.noise_std = noise_std
         self.num_workers = num_workers
 
         self.source_target_split_fn = functools.partial(
-            custom_collate_fn, source_target_split=self.source_target_split
+            custom_collate_fn,
+            source_target_split=self.source_target_split,
+            noise_std=self.noise_std,
         )
 
     def setup(self, stage: str = "fit") -> None:
