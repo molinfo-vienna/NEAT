@@ -2,12 +2,9 @@
 # https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/fce07d701a2d2340f3522df588832c2c0f7e044a/qm9/bond_analyze.py#L4
 # https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/fce07d701a2d2340f3522df588832c2c0f7e044a/qm9/analyze.py#L4
 
-## analyze.py
-
-import torch
 import numpy as np
-from rdkit import RDLogger
-from rdkit import Chem
+import torch
+from rdkit import Chem, RDLogger
 from tqdm import tqdm
 
 bond_dict = [
@@ -18,7 +15,6 @@ bond_dict = [
     Chem.rdchem.BondType.AROMATIC,
 ]
 
-## datasets_config.py
 qm9_with_h = {
     "name": "qm9",
     "mapping": {1: 0, 6: 1, 7: 2, 8: 3, 9: 4},
@@ -435,8 +431,6 @@ geom_with_h = {
     "with_h": True,
 }
 
-## bond_analyze.py
-
 # Bond lengths from:
 # http://www.wiredchemist.com/chemistry/data/bond_energies_lengths.html
 # And:
@@ -695,10 +689,12 @@ def single_bond_only(threshold, length, margin1=5):
     return 0
 
 
-def geom_predictor(p, l, margin1=5, limit_bonds_to_one=False):
-    """p: atom pair (couple of str)
-    l: bond length (float)"""
-    bond_order = get_bond_order(p[0], p[1], l, check_exists=True)
+def geom_predictor(atom_pair, bond_length, limit_bonds_to_one=False):
+    """atom_pair: atom pair (couple of str)
+    bond_length: bond length (float)"""
+    bond_order = get_bond_order(
+        atom_pair[0], atom_pair[1], bond_length, check_exists=True
+    )
 
     # If limit_bonds_to_one is enabled, every bond type will return 1.
     if limit_bonds_to_one:
@@ -741,7 +737,7 @@ def check_stability(positions, atom_type, dataset_info, debug=False):
     nr_stable_bonds = 0
     for atom_type_i, nr_bonds_i in zip(atom_type, nr_bonds):
         possible_bonds = allowed_bonds[atom_decoder[atom_type_i]]
-        if type(possible_bonds) == int:
+        if isinstance(possible_bonds, int):
             is_stable = possible_bonds == nr_bonds_i
         else:
             is_stable = nr_bonds_i in possible_bonds
@@ -833,7 +829,6 @@ def edm_metrics(x, pos, batch, dataset):
         dataset_info = qm9_with_h
     elif dataset == "geom":
         dataset_info = geom_with_h
-    mapping = dataset_info["mapping"]
 
     count_mol_stable = 0
     count_atm_stable = 0

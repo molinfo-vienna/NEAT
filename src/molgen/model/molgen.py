@@ -11,12 +11,12 @@ import types
 import torch
 import torch.nn as nn
 from lightning import LightningModule
+from scipy.optimize import linear_sum_assignment
 from torch import Tensor
 from torch.nn import functional as F
 from torch.optim import Optimizer
 from torch_geometric.data import Data
 from torch_geometric.nn.pool import global_add_pool, global_mean_pool
-from scipy.optimize import linear_sum_assignment
 
 from .attention import Block
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
@@ -714,6 +714,8 @@ class MolGen(LightningModule):
         max_atoms: int = 100,
         num_time_steps: int = 30,
         device: torch.device = torch.device("cuda"),
+        prefix_x: Tensor = None,
+        prefix_pos: Tensor = None,
     ) -> tuple[Tensor, Tensor, Tensor]:
         """
         Generate a molecule using the flow matching network.
@@ -727,15 +729,25 @@ class MolGen(LightningModule):
         Returns:
             tuple[Tensor, Tensor, Tensor]: The generated molecule, its positions, and the batch indices.
         """
-        # (1) Sample initial atoms from the prior distribution of atom types in QM9
-        dist = torch.tensor(
-            [0.0000, 0.5109, 0.3517, 0.0580, 0.0780, 0.0014], device=device
-        )
-        x = torch.multinomial(dist, batch_size, replacement=True)  # [batch_size]
-        # (2) Initialize starting positions with random ones
-        pos = self.hparams.noise_std * torch.randn(batch_size, 3, device=device)
-        # (3) Initialize the batch source tensor
-        batch_source = torch.arange(batch_size, device=device)
+        if prefix_x is not None and prefix_pos is not None:
+            # (1) Initialize starting atom types with the provided prefix
+            x = torch.cat([prefix_x for _ in range(batch_size)]).to(device)
+            # (2) Initialize starting positions with the provided prefix
+            pos = torch.cat([prefix_pos for _ in range(batch_size)], dim=0).to(device)
+            # (3) Initialize the batch source tensor with the provided prefix
+            batch_source = torch.cat(
+                [torch.ones_like(prefix_x) * i for i in range(batch_size)]
+            ).to(device)
+        else:
+            # (1) Sample initial atoms from the prior distribution of atom types in QM9
+            dist = torch.tensor(
+                [0.0000, 0.5109, 0.3517, 0.0580, 0.0780, 0.0014], device=device
+            )
+            x = torch.multinomial(dist, batch_size, replacement=True)  # [batch_size]
+            # (2) Initialize starting positions with random ones
+            pos = self.hparams.noise_std * torch.randn(batch_size, 3, device=device)
+            # (3) Initialize the batch source tensor
+            batch_source = torch.arange(batch_size, device=device)
         # (4) Create a mask for the stop tokens that will be used to track which molecules have a stop token
         stop_token_mask = torch.zeros(batch_size, device=device, dtype=torch.bool)
         # (5) Create a tensor of molecule indices that do not have a stop token

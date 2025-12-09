@@ -13,7 +13,6 @@ from molgen.model import GenerationMonitor, MolGen
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-# Settings for deterministic training
 torch.set_float32_matmul_precision("medium")
 torch_geometric.seed_everything(42)
 seed_everything(42)
@@ -22,7 +21,6 @@ torch.backends.cudnn.benchmark = False
 
 
 def training(args: argparse.Namespace) -> None:
-    # Load settings
     ROOT = os.getcwd()
     if args.config_file is not None:
         CONFIG_FILE_PATH = args.config_file
@@ -31,7 +29,6 @@ def training(args: argparse.Namespace) -> None:
         CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_training.yaml")
         print(f"Using default config file: {CONFIG_FILE_PATH}")
 
-    # Training configs
     MODEL = MolGen
     params = yaml.load(
         open(CONFIG_FILE_PATH, "r"),
@@ -50,7 +47,7 @@ def training(args: argparse.Namespace) -> None:
 
     accumulate_grad_batches = params.pop("accumulate_grad_batches")
 
-    #------- Model initialization -----------------------------
+    # ------- Model initialization -----------------------------
 
     # Initialize a new model instance...
     model = MODEL(**params)
@@ -76,7 +73,7 @@ def training(args: argparse.Namespace) -> None:
     # The trainer.fit() method needs to be called with the right arguments,
     # depending on whether we are initializing a new model or loading one.
 
-    #----------------------------------------------------------
+    # ----------------------------------------------------------
 
     tb_logger = TensorBoardLogger(
         os.path.join(ROOT, "logs"),
@@ -85,21 +82,21 @@ def training(args: argparse.Namespace) -> None:
     )
     # Define the first ModelCheckpoint for validation loss
     checkpoint_val_loss = ModelCheckpoint(
-        monitor="val/val_loss",  # Metric to monitor
-        mode="min",  # Save the model with the minimum validation loss
-        filename="best-val-loss-{epoch:02d}",  # Filename format
-        save_top_k=1,  # Save only the best model
-        every_n_epochs=10,  # Check every epoch
+        monitor="val/val_loss",
+        mode="min",
+        filename="best-val-loss-{epoch:02d}",
+        save_top_k=1,
+        every_n_epochs=10,
     )
 
-    # Define the second ModelCheckpoint for another metric (e.g., validation accuracy)
+    # Define the second ModelCheckpoint for molecular validity
     generate_every_n_epochs = 50
     checkpoint_validity = ModelCheckpoint(
-        monitor="val/validity",  # Metric to monitor
-        mode="max",  # Save the model with the maximum validation accuracy
-        filename="best-val-validity-{epoch:02d}",  # Filename format
-        save_top_k=1,  # Save only the best model
-        every_n_epochs=generate_every_n_epochs,  # Check every epoch
+        monitor="val/validity",
+        mode="max",
+        filename="best-val-validity-{epoch:02d}",
+        save_top_k=1,
+        every_n_epochs=generate_every_n_epochs,
     )
     callbacks = [
         GenerationMonitor(num_samples=10000, every_n_epochs=generate_every_n_epochs),

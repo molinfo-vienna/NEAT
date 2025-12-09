@@ -1,10 +1,10 @@
 import functools
 
+import torch
 from lightning import LightningDataModule
+from scipy.optimize import linear_sum_assignment
 from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
-import torch
-from scipy.optimize import linear_sum_assignment
 
 from .augmentation import RandomRotationAugmentation
 from .dataset import DataSet

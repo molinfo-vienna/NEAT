@@ -1,5 +1,7 @@
 import argparse
 import os
+from logging import root
+from pathlib import Path
 
 import py3Dmol
 import rdkit
@@ -62,85 +64,94 @@ if __name__ == "__main__":
         open(CONFIG_FILE_PATH, "r"),
         Loader=yaml.FullLoader,
     )
+    data_path = Path(params["data_path"])
+    for subdir in data_path.iterdir():
+        if subdir.is_dir() and subdir.name.startswith("seed"):
+            subdata_path = os.path.join(data_path, subdir.name)
+            builder = MoleculeBuilder()
+            x, pos, batch = builder.load_tensor_from_file(subdata_path)
 
-    builder = MoleculeBuilder()
-    x, pos, batch = builder.load_tensor_from_file(params["data_path"])
+            (
+                atom_stability,
+                mol_stability,
+                edm_validity,
+                edm_uniqueness,
+                edm_invalid_idxs,
+            ) = edm_metrics(x, pos, batch, "qm9")
 
-    atom_stability, mol_stability, edm_validity, edm_uniqueness, edm_invalid_idxs = (
-        edm_metrics(x, pos, batch, "qm9")
-    )
+            mols = builder.generate_rdkit_molecules(x, pos, batch)
 
-    mols = builder.generate_rdkit_molecules(x, pos, batch)
+            n_valid = compute_validity(mols)
+            n_unique = compute_uniqueness(mols)
 
-    n_valid = compute_validity(mols)
-    n_unique = compute_uniqueness(mols)
+            with open(os.path.join(subdata_path, "evaluation_results.txt"), "w") as f:
+                f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
+                f.write(f"Molecule stability: {mol_stability*100:.2f}%\n")
+                f.write(f"EDM valid: {edm_validity*100:.2f}%\n")
+                f.write(f"EDM unique: {edm_uniqueness*100:.2f}%\n")
+                f.write(
+                    f"EDM valid x unique: {(edm_validity*edm_uniqueness)*100:.2f}%\n"
+                )
+                f.write(f"xyz2mol valid: {n_valid/len(mols)*100:.2f}%\n")
+                f.write(f"xyz2mol unique: {n_unique/n_valid*100:.2f}%\n")
+                f.write(
+                    f"xyz2mol valid x unique: {(n_valid/len(mols))*(n_unique/n_valid)*100:.2f}%\n"
+                )
+                f.write(f"Data set: {params['data_set']}\n")
+                f.write(f"RDKit version: {rdkit.__version__}\n")
 
-    with open(os.path.join(params["data_path"], "evaluation_results.txt"), "w") as f:
-        f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
-        f.write(f"Molecule stability: {mol_stability*100:.2f}%\n")
-        f.write(f"EDM valid: {edm_validity*100:.2f}%\n")
-        f.write(f"EDM unique: {edm_uniqueness*100:.2f}%\n")
-        f.write(f"EDM valid x unique: {(edm_validity*edm_uniqueness)*100:.2f}%\n")
-        f.write(f"xyz2mol valid: {n_valid/len(mols)*100:.2f}%\n")
-        f.write(f"xyz2mol unique: {n_unique/n_valid*100:.2f}%\n")
-        f.write(f"xyz2mol valid x unique: {(n_valid/len(mols))*(n_unique/n_valid)*100:.2f}%\n")
-        f.write(f"Data set: {params['data_set']}\n")
-        f.write(f"RDKit version: {rdkit.__version__}\n")
+            mols = mols[:NUM_MOLECULES_PLOTTED]
+            img = Draw.MolsToGridImage(
+                mols,
+                molsPerRow=NUM_MOLECULES_PER_ROW,
+                subImgSize=(RESOLUTION, RESOLUTION),
+            )
+            img.save(os.path.join(subdata_path, "generated_molecules.png"))
 
-    # Only plot the first N molecules for clarity
-    mols = mols[:NUM_MOLECULES_PLOTTED]
-    img = Draw.MolsToGridImage(
-        mols, molsPerRow=NUM_MOLECULES_PER_ROW, subImgSize=(RESOLUTION, RESOLUTION)
-    )
-    img.save(os.path.join(params["data_path"], "generated_molecules.png"))
+            mols_2d = []
+            for mol in mols:
+                if mol is None:
+                    mols_2d.append(None)
+                else:
+                    rdDepictor.Compute2DCoords(mol)
+                    mol = RemoveHs(mol)
+                    mols_2d.append(mol)
 
-    mols_2d = []
-    for mol in mols:
-        if mol is None:
-            mols_2d.append(None)
-        else:
-            rdDepictor.Compute2DCoords(mol)
-            mol = RemoveHs(mol)
-            mols_2d.append(mol)
+            img = Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
+            img.save(os.path.join(subdata_path, "generated_molecules_2d.png"))
 
-    img = Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
-    img.save(os.path.join(params["data_path"], "generated_molecules_2d.png"))
+            print(f"Saved generated molecules images to {os.path.join(subdata_path)}.")
 
-    print(f"Saved generated molecules images to {os.path.join(params['data_path'])}.")
+            view = py3Dmol.view(
+                width=NUM_MOLECULES_PER_ROW * RESOLUTION,
+                height=NUM_MOLECULES_PLOTTED * RESOLUTION,
+                viewergrid=(NUM_MOLECULES_PLOTTED, NUM_MOLECULES_PER_ROW),
+            )
 
-    view = py3Dmol.view(
-        width=NUM_MOLECULES_PER_ROW * RESOLUTION,
-        height=NUM_MOLECULES_PLOTTED * RESOLUTION,
-        viewergrid=(NUM_MOLECULES_PLOTTED, NUM_MOLECULES_PER_ROW),
-    )
+            for i in range(NUM_MOLECULES_PLOTTED):
+                row = i // NUM_MOLECULES_PER_ROW
+                col = i % NUM_MOLECULES_PER_ROW
 
-    for i in range(NUM_MOLECULES_PLOTTED):
-        row = i // NUM_MOLECULES_PER_ROW
-        col = i % NUM_MOLECULES_PER_ROW
+                x_sub = x[batch == i]
+                pos_sub = pos[batch == i]
 
-        # Get the atom types and positions for the current molecule
-        x_sub = x[batch == i]
-        pos_sub = pos[batch == i]
+                xyz = builder.create_xyz_block(x_sub, pos_sub)
 
-        # Convert atom types and positions to XYZ format
-        xyz = builder.create_xyz_block(x_sub, pos_sub)
+                view.addModel(xyz, "xyz", viewer=(row, col))
+                view.setStyle(
+                    {"model": -1},
+                    {"stick": {"radius": 0.2}, "sphere": {"scale": 0.3}},
+                    viewer=(row, col),
+                )
 
-        # Add the molecule to the py3Dmol viewer
-        view.addModel(xyz, "xyz", viewer=(row, col))
-        view.setStyle(
-            {"model": -1},
-            {"stick": {"radius": 0.2}, "sphere": {"scale": 0.3}},
-            viewer=(row, col),
-        )
+            view.zoomTo()
+            view.show()
 
-    view.zoomTo()
-    view.show()
+            with open(
+                os.path.join(subdata_path, "generated_molecules_3d.html"), "w"
+            ) as f:
+                f.write(view._make_html())
 
-    with open(
-        os.path.join(params["data_path"], "generated_molecules_3d.html"), "w"
-    ) as f:
-        f.write(view._make_html())
-
-    print(
-        f"Saved 3D visualization to {os.path.join(params['data_path'], 'generated_molecules_3d.html')}"
-    )
+            print(
+                f"Saved 3D visualization to {os.path.join(subdata_path, 'generated_molecules_3d.html')}"
+            )

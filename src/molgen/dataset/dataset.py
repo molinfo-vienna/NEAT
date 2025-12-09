@@ -208,7 +208,9 @@ class DataSet(InMemoryDataset):
 
                 # Combine bond attributes
                 edge_attr.append(bond_type_ohe + [is_aromatic, in_ring])
-                edge_attr.append(bond_type_ohe + [is_aromatic, in_ring])  # Add reverse bond
+                edge_attr.append(
+                    bond_type_ohe + [is_aromatic, in_ring]
+                )  # Add reverse bond
 
             # Convert edge_index and edge_attr to tensors
             edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()

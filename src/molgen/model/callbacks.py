@@ -1,6 +1,6 @@
+import torch
 from lightning import Callback, LightningModule, Trainer
 from rdkit import Chem
-import torch
 
 from molgen.model.molecule_builder import MoleculeBuilder
 
