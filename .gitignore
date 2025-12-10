@@ -6,7 +6,7 @@ __pycache__/
 .env
 .pytest_cache
 .ipynb_checkpoints
-*.ipynb
+plotting.ipynb
 *.pyc
 *.tar.gz
 *.egg-info
