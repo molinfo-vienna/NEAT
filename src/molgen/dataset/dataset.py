@@ -37,7 +37,7 @@ class DataSet(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return ["qm9.pt"]
+        return ["qm9.pt", "qm9.sdf", "_not_sanitized_idx.pt"]
 
     def download(self):
         raw_path = os.path.join(self.root, "raw")
@@ -125,12 +125,9 @@ class DataSet(InMemoryDataset):
             data, mol, sanitized = self.process_molecule(molecule)
             if data is not None:
                 data_list.append(data)
+                mol_list.append(mol)
                 if not sanitized:
-                    not_sanitized.append(idx)
-                else:
-                    mol_list.append(mol)
-
-        data_list = [data for data in data_list if data is not None]
+                    not_sanitized.append(idx)   
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
@@ -139,15 +136,17 @@ class DataSet(InMemoryDataset):
             data_list = [self.pre_transform(data) for data in data_list]
 
         self.save(data_list, self.processed_paths[0])
-        not_sanitized = torch.tensor(not_sanitized, dtype=torch.long)
-        torch.save(
-            not_sanitized,
-            os.path.join(self.root, "processed", "_not_sanitized_idx.pt"),
-        )
-        writer = Chem.SDWriter(os.path.join(self.root, "processed", "qm9.sdf"))
+
+        writer = Chem.SDWriter(self.processed_paths[1])
         for mol in mol_list:
             writer.write(mol)
         writer.close()
+        
+        not_sanitized = torch.tensor(not_sanitized, dtype=torch.long)
+        torch.save(
+            not_sanitized,
+            self.processed_paths[2],
+        )
 
     @staticmethod
     def try_sanitize_molecule(mol):

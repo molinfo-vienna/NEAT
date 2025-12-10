@@ -83,12 +83,14 @@ if __name__ == "__main__":
     DATA_ROOT = os.path.join(ROOT, "data", params["data_set"])
     datamodule = DataModule(DATA_ROOT)
     datamodule.setup()
+    splits = datamodule.full_data.get_qm9_splits()
+    training_idxs = splits["train"]
     supplier = SDMolSupplier(
         os.path.join(DATA_ROOT, "processed", "qm9.sdf"),
         removeHs=False,
         sanitize=False,
     )
-    reference_mols = [mol for mol in supplier if mol is not None]
+    reference_mols = [supplier[int(idx)] for idx in training_idxs if supplier[int(idx)] is not None]
 
     data_path = Path(params["data_path"])
     for subdir in data_path.iterdir():
