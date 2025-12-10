@@ -118,14 +118,17 @@ class DataSet(InMemoryDataset):
         except yaml.YAMLError as e:
             print(f"Error loading YAML file: {e}")
         data_list = []
+        mol_list = []
         not_sanitized = []
         supplier = Chem.SDMolSupplier(raw_path, removeHs=False, sanitize=False)
         for idx, molecule in tqdm(enumerate(supplier)):
-            data, sanitized = self.process_molecule(molecule)
+            data, mol, sanitized = self.process_molecule(molecule)
             if data is not None:
                 data_list.append(data)
                 if not sanitized:
                     not_sanitized.append(idx)
+                else:
+                    mol_list.append(mol)
 
         data_list = [data for data in data_list if data is not None]
 
@@ -141,23 +144,33 @@ class DataSet(InMemoryDataset):
             not_sanitized,
             os.path.join(self.root, "processed", "_not_sanitized_idx.pt"),
         )
+        writer = Chem.SDWriter(os.path.join(self.root, "processed", "qm9.sdf"))
+        for mol in mol_list:
+            writer.write(mol)
+        writer.close()
 
     @staticmethod
     def try_sanitize_molecule(mol):
+        """Attempt to sanitize a molecule.
+
+        Args:
+            mol (rdkit.Chem.Mol): The molecule to sanitize.
+
+        Returns:
+            mol, bool: The original molecule and a boolean flag indicating whether sanitization was successful.
+        """
         try:
-            # Attempt to sanitize the molecule
             Chem.SanitizeMol(mol)
             return (
                 mol,
                 True,
-            )  # Return the molecule and a flag indicating successful sanitization
+            )
         except Exception as e:
-            # If sanitization fails, flag it and continue
             logging.warning(f"Sanitization failed for molecule: {e}")
             return (
                 mol,
                 False,
-            )  # Return the molecule and a flag indicating sanitization failure
+            )
 
     def process_molecule(self, mol):
         try:
@@ -236,7 +249,7 @@ class DataSet(InMemoryDataset):
                 eccentricity=eccentricity_tensor,
             )
 
-            return data, sanitized
+            return data, mol, sanitized
 
         except Exception as e:
             print(f"Error processing {mol}: {e}")
