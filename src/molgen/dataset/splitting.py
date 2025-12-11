@@ -282,6 +282,8 @@ class SourceTargetSplitter:
             pos_target,
             batch_target,
             stop_tokens,
+            source_set_idx,
+            target_set_neighbours_idx,
         )
 
     @staticmethod

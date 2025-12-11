@@ -27,6 +27,8 @@ def batch_transform(batch, source_target_split, noise_std):
         pos_target,  # [n_target_atoms, 3]
         batch_target,  # [n_target_atoms]
         stop_tokens,  # [n_molecules]
+        source_ptr,
+        target_ptr,
     ) = splitter.create_source_target_split(batch)
 
     batch.x_source = x_source
@@ -36,6 +38,8 @@ def batch_transform(batch, source_target_split, noise_std):
     batch.pos_target = pos_target
     batch.batch_target = batch_target
     batch.stop_tokens = stop_tokens
+    batch.source_ptr = source_ptr
+    batch.target_ptr = target_ptr
 
     batch_target = batch_target.long()
     pos_random = noise_std * torch.randn_like(pos_target)
