@@ -3,7 +3,7 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "molgen"
+name = "neat"
 version = "2025.10.216"
 description = "Autoregressive generation of molecules"
 readme = "README.md"

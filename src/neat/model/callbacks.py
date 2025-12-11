@@ -2,7 +2,7 @@ import torch
 from lightning import Callback, LightningModule, Trainer
 from rdkit import Chem
 
-from molgen.model.molecule_builder import MoleculeBuilder
+from neat.model.molecule_builder import MoleculeBuilder
 
 
 class GenerationMonitor(Callback):

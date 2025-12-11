@@ -23,9 +23,9 @@ from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEnc
 from .simple_mlp import SimpleMLPAdaLN
 
 
-class MolGen(LightningModule):
+class NEAT(LightningModule):
     def __init__(self, **params) -> None:
-        super(MolGen, self).__init__()
+        super(NEAT, self).__init__()
         self.hparams.setdefault("noise_std", 1.0)
         self.save_hyperparameters()
 

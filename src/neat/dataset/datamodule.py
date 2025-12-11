@@ -7,14 +7,11 @@ from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
 
 from .augmentation import RandomRotationAugmentation
-from .dataset import DataSet
+from .dataset import QM9DataSet
 from .splitting import SourceTargetSplitter
 
 
 def batch_transform(batch, source_target_split, noise_std):
-    # Apply your batch-level augmentation logic here
-    # For example, add random noise to all node features in the batch
-    # data augmentation by random rotation
     rotation_augmentation = RandomRotationAugmentation()
     batch.pos = rotation_augmentation.rotate_graphs_randomly(batch.pos, batch.batch)
     splitter = SourceTargetSplitter(splitting_mode=source_target_split)
@@ -50,7 +47,7 @@ def batch_transform(batch, source_target_split, noise_std):
         )
         _, prior_idx = linear_sum_assignment(cost_matrix.cpu())
 
-        # reorder prior to according to optimal assignment
+        # Reorder prior according to optimal assignment
         pos_random[batch_target == idx] = pos_random[batch_target == idx][prior_idx]
     batch.pos_random = pos_random
 
@@ -99,14 +96,11 @@ class DataModule(LightningDataModule):
 
     def setup(self, stage: str = "fit") -> None:
         if stage == "fit":
-            self.full_data = DataSet(self.training_data_dir, transform=None)
-
-            # Use the EDM splits for the training, validation, and test sets
-            splits = self.full_data.get_qm9_splits()
+            self.full_data = QM9DataSet(self.training_data_dir, transform=None)
+            splits = self.full_data.get_splits()
             self.training_data = self.full_data[splits["train"]]
             self.validation_data = self.full_data[splits["val"]]
             self.test_data = self.full_data[splits["test"]]
-
             print(f"Number of training graphs: {len(self.training_data)}")
             print(f"Number of validation graphs: {len(self.validation_data)}")
             print(f"Number of test graphs: {len(self.test_data)}")

@@ -8,9 +8,9 @@ import rdkit
 import yaml
 from rdkit.Chem import AllChem, Draw, MolToSmiles, rdDepictor, SDMolSupplier
 
-from molgen.dataset import DataModule
-from molgen.model.molecule_builder import MoleculeBuilder
-from molgen.utils.edm_metrics import edm_metrics
+from neat.dataset import DataModule
+from neat.model.molecule_builder import MoleculeBuilder
+from neat.utils.edm_metrics import edm_metrics
 
 RESOLUTION = 400
 NUM_MOLECULES_PLOTTED = 100
@@ -81,7 +81,7 @@ if __name__ == "__main__":
     DATA_ROOT = os.path.join(ROOT, "data", params["data_set"])
     datamodule = DataModule(DATA_ROOT)
     datamodule.setup()
-    splits = datamodule.full_data.get_qm9_splits()
+    splits = datamodule.full_data.get_splits()
     training_idxs = splits["train"]
     training_data = datamodule.full_data.index_select(training_idxs)
     reference_smiles = training_data.smiles

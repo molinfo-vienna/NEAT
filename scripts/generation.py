@@ -6,8 +6,8 @@ import torch_geometric
 import yaml
 from lightning import seed_everything
 
-from molgen.model import MolGen
-from molgen.model.molecule_builder import MoleculeBuilder
+from neat.model import NEAT
+from neat.model.molecule_builder import MoleculeBuilder
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -44,7 +44,7 @@ def generate(args: argparse.Namespace) -> None:
     CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
     print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
 
-    MODEL = MolGen
+    MODEL = NEAT
     model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
 
     seeds = [i for i in range(params.get("num_runs", 1))]

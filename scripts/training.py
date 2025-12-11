@@ -8,8 +8,8 @@ from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 
-from molgen.dataset import DataModule
-from molgen.model import GenerationMonitor, MolGen
+from neat.dataset import DataModule
+from neat.model import GenerationMonitor, NEAT
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -29,7 +29,7 @@ def training(args: argparse.Namespace) -> None:
         CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_training.yaml")
         print(f"Using default config file: {CONFIG_FILE_PATH}")
 
-    MODEL = MolGen
+    MODEL = NEAT
     params = yaml.load(
         open(CONFIG_FILE_PATH, "r"),
         Loader=yaml.FullLoader,
@@ -105,7 +105,7 @@ def training(args: argparse.Namespace) -> None:
         LearningRateMonitor(logging_interval="epoch"),
     ]
     trainer = Trainer(
-        devices=[0],
+        devices=[3],
         max_epochs=params["max_epochs"],
         accelerator="gpu",
         logger=tb_logger,
