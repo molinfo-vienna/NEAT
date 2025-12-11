@@ -2,6 +2,7 @@ import argparse
 import os
 from pathlib import Path
 
+import numpy as np
 import py3Dmol
 import rdkit
 import yaml
@@ -16,32 +17,32 @@ NUM_MOLECULES_PLOTTED = 100
 NUM_MOLECULES_PER_ROW = 5
 
 
-def compute_validity(mols):
-    num_valid = 0
-    for mol in mols:
-        if mol is not None:
-            num_valid += 1
-    return num_valid
-
-
-def compute_uniqueness(mols):
+def compute_validity_uniqueness_novelty(mols, reference_smiles):
+    ref_set = set(reference_smiles)
     unique_smiles = set()
+    num_valid = 0
+
     for mol in mols:
-        if mol is not None:
-            smiles = MolToSmiles(mol, canonical=True)
-            unique_smiles.add(smiles)
-    return len(unique_smiles)
+        if mol is None:
+            continue
+        num_valid += 1
+        smiles = MolToSmiles(mol, canonical=True)
+        unique_smiles.add(smiles)
+
+    num_unique = len(unique_smiles)
+    num_novel = len(unique_smiles - ref_set)
+
+    p_valid = num_valid / len(mols)
+    p_valid_unique = num_unique / len(mols)
+    p_valid_unique_novel = num_novel / len(mols)
+    return p_valid, p_valid_unique, p_valid_unique_novel
 
 
-def compute_novelty(generated_mols, reference_smiles):
-    unique_generated_smiles = set()
-    for mol in generated_mols:
-        if mol is not None:
-            smiles = MolToSmiles(mol, canonical=True)
-            unique_generated_smiles.add(smiles)
-    intersection = unique_generated_smiles.intersection(set(reference_smiles))
-    num_novel = len(unique_generated_smiles) - len(intersection)
-    return num_novel
+def compute_mean_and_95_ci(data):
+    mean = np.mean(data)
+    std_err = np.std(data) / np.sqrt(len(data))
+    margin_of_error = 1.96 * std_err
+    return mean, margin_of_error
 
 
 def parseArgs() -> argparse.Namespace:
@@ -63,18 +64,20 @@ if __name__ == "__main__":
     args = parseArgs()
 
     ROOT = os.getcwd()
+
+    # Load config file
     if args.config_file is not None:
         CONFIG_FILE_PATH = args.config_file
         print(f"Using config file: {CONFIG_FILE_PATH}")
     else:
         CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_evaluation.yaml")
         print(f"Using default config file: {CONFIG_FILE_PATH}")
-
     params = yaml.load(
         open(CONFIG_FILE_PATH, "r"),
         Loader=yaml.FullLoader,
     )
 
+    # Load preprocessed training data for computing novelty
     DATA_ROOT = os.path.join(ROOT, "data", params["data_set"])
     datamodule = DataModule(DATA_ROOT)
     datamodule.setup()
@@ -83,6 +86,7 @@ if __name__ == "__main__":
     training_data = datamodule.full_data.index_select(training_idxs)
     reference_smiles = training_data.smiles
 
+    # Evaluate generated molecules across all available seeds
     data_path = Path(params["data_path"])
     for subdir in data_path.iterdir():
         if subdir.is_dir() and subdir.name.startswith("seed"):
@@ -93,31 +97,31 @@ if __name__ == "__main__":
             (
                 atom_stability,
                 mol_stability,
-                edm_validity,
-                edm_uniqueness,
+                edm_valid,
+                edm_unique,
                 edm_invalid_idxs,
             ) = edm_metrics(x, pos, batch, "qm9")
 
             mols = builder.generate_rdkit_molecules(x, pos, batch)
 
-            n_valid = compute_validity(mols)
-            n_unique = compute_uniqueness(mols)
-            n_novel = compute_novelty(mols, reference_smiles)
+            (xyz2mol_valid, xyz2mol_valid_x_unique, xyz2mol_valid_x_unique_x_novel) = (
+                compute_validity_uniqueness_novelty(mols, reference_smiles)
+            )
 
             with open(os.path.join(subdata_path, "evaluation_results.txt"), "w") as f:
                 f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
                 f.write(f"Molecule stability: {mol_stability*100:.2f}%\n")
-                f.write(f"EDM valid: {edm_validity*100:.2f}%\n")
-                f.write(f"EDM unique: {edm_uniqueness*100:.2f}%\n")
+                f.write(f"Lookup valid: {edm_valid*100:.2f}%\n")
                 f.write(
-                    f"EDM valid x unique: {(edm_validity*edm_uniqueness)*100:.2f}%\n"
+                    f"Lookup valid x unique: { edm_valid * edm_unique * 100:.2f}%\n"
                 )
-                f.write(f"xyz2mol valid: {n_valid/len(mols)*100:.2f}%\n")
-                f.write(f"xyz2mol unique: {n_unique/n_valid*100:.2f}%\n")
+                f.write(f"xyz2mol valid: {xyz2mol_valid*100:.2f}%\n")
                 f.write(
-                    f"xyz2mol valid x unique: {(n_valid/len(mols))*(n_unique/n_valid)*100:.2f}%\n"
+                    f"xyz2mol valid x unique: {xyz2mol_valid_x_unique * 100:.2f}%\n"
                 )
-                f.write(f"xyz2mol novel: {n_novel/len(mols)*100:.2f}%\n")
+                f.write(
+                    f"xyz2mol valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n"
+                )
                 f.write(f"Data set: {params['data_set']}\n")
                 f.write(f"RDKit version: {rdkit.__version__}\n")
 
@@ -176,3 +180,72 @@ if __name__ == "__main__":
             print(
                 f"Saved 3D visualization to {os.path.join(subdata_path, 'generated_molecules_3d.html')}"
             )
+
+    # Collect and average results across all seeds
+    atom_stability_lst = []
+    molecule_stability_lst = []
+    lookup_valid_lst = []
+    lookup_valid_x_unique_lst = []
+    xyz2mol_valid_lst = []
+    xyz2mol_valid_x_unique_lst = []
+    xyz2mol_valid_x_unique_x_novel_lst = []
+
+    for subdir in data_path.iterdir():
+        if Path.is_dir(subdir):
+            results_file = os.path.join(subdir, "evaluation_results.txt")
+        else:
+            continue
+        with open(results_file, "r") as f:
+            lines = f.readlines()
+            atom_stability_lst.append(float(lines[0].strip().split(": ")[1].strip("%")))
+            molecule_stability_lst.append(
+                float(lines[1].strip().split(": ")[1].strip("%"))
+            )
+            lookup_valid_lst.append(float(lines[2].strip().split(": ")[1].strip("%")))
+            lookup_valid_x_unique_lst.append(
+                float(lines[3].strip().split(": ")[1].strip("%"))
+            )
+            xyz2mol_valid_lst.append(float(lines[4].strip().split(": ")[1].strip("%")))
+            xyz2mol_valid_x_unique_lst.append(
+                float(lines[5].strip().split(": ")[1].strip("%"))
+            )
+            xyz2mol_valid_x_unique_x_novel_lst.append(
+                float(lines[6].strip().split(": ")[1].strip("%"))
+            )
+
+    atom_stability_mean, atom_stability_ci = compute_mean_and_95_ci(atom_stability_lst)
+    molecule_stability_mean, molecule_stability_ci = compute_mean_and_95_ci(
+        molecule_stability_lst
+    )
+    lookup_valid_mean, lookup_valid_ci = compute_mean_and_95_ci(lookup_valid_lst)
+    lookup_valid_x_unique_mean, lookup_valid_x_unique_ci = compute_mean_and_95_ci(
+        lookup_valid_x_unique_lst
+    )
+    xyz2mol_valid_mean, xyz2mol_valid_ci = compute_mean_and_95_ci(xyz2mol_valid_lst)
+    xyz2mol_valid_x_unique_mean, xyz2mol_valid_x_unique_ci = compute_mean_and_95_ci(
+        xyz2mol_valid_x_unique_lst
+    )
+    xyz2mol_valid_x_unique_x_novel_mean, xyz2mol_valid_x_unique_x_novel_ci = (
+        compute_mean_and_95_ci(xyz2mol_valid_x_unique_x_novel_lst)
+    )
+
+    with open(os.path.join(data_path, "evaluation_summary.txt"), "w") as f:
+        f.write(
+            f"Atom stability: {atom_stability_mean:.2f}% ± {atom_stability_ci:.2f}%\n"
+        )
+        f.write(
+            f"Molecule stability: {molecule_stability_mean:.2f}% ± {molecule_stability_ci:.2f}%\n"
+        )
+        f.write(f"Lookup valid: {lookup_valid_mean:.2f}% ± {lookup_valid_ci:.2f}%\n")
+        f.write(
+            f"Lookup valid x unique: {lookup_valid_x_unique_mean:.2f}% ± {lookup_valid_x_unique_ci:.2f}%\n"
+        )
+        f.write(f"xyz2mol valid: {xyz2mol_valid_mean:.2f}% ± {xyz2mol_valid_ci:.2f}%\n")
+        f.write(
+            f"xyz2mol valid x unique: {xyz2mol_valid_x_unique_mean:.2f}% ± {xyz2mol_valid_x_unique_ci:.2f}%\n"
+        )
+        f.write(
+            f"xyz2mol valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean:.2f}% ± {xyz2mol_valid_x_unique_x_novel_ci:.2f}%\n"
+        )
+        f.write(f"Data set: {params['data_set']}\n")
+        f.write(f"RDKit version: {rdkit.__version__}\n")

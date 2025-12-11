@@ -125,7 +125,7 @@ class DataSet(InMemoryDataset):
             if data is not None:
                 data_list.append(data)
                 if not sanitized:
-                    not_sanitized.append(idx)   
+                    not_sanitized.append(idx)
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
@@ -134,7 +134,9 @@ class DataSet(InMemoryDataset):
             data_list = [self.pre_transform(data) for data in data_list]
 
         self.save(data_list, self.processed_paths[0])
-        torch.save(torch.tensor(not_sanitized, dtype=torch.long), self.processed_paths[1])
+        torch.save(
+            torch.tensor(not_sanitized, dtype=torch.long), self.processed_paths[1]
+        )
 
     @staticmethod
     def try_sanitize_molecule(mol):
