@@ -33,18 +33,13 @@ def compute_uniqueness(mols):
     return len(unique_smiles)
 
 
-def compute_novelty(generated_mols, reference_mols):
+def compute_novelty(generated_mols, reference_smiles):
     unique_generated_smiles = set()
     for mol in generated_mols:
         if mol is not None:
             smiles = MolToSmiles(mol, canonical=True)
             unique_generated_smiles.add(smiles)
-    reference_smiles = set()
-    for mol in reference_mols:
-        if mol is not None:
-            smiles = MolToSmiles(mol, canonical=True)
-            reference_smiles.add(smiles)
-    intersection = unique_generated_smiles.intersection(reference_smiles)
+    intersection = unique_generated_smiles.intersection(set(reference_smiles))
     num_novel = len(unique_generated_smiles) - len(intersection)
     return num_novel
 
@@ -85,12 +80,8 @@ if __name__ == "__main__":
     datamodule.setup()
     splits = datamodule.full_data.get_qm9_splits()
     training_idxs = splits["train"]
-    supplier = SDMolSupplier(
-        os.path.join(DATA_ROOT, "processed", "qm9.sdf"),
-        removeHs=False,
-        sanitize=False,
-    )
-    reference_mols = [supplier[int(idx)] for idx in training_idxs if supplier[int(idx)] is not None]
+    training_data = datamodule.full_data.index_select(training_idxs)
+    reference_smiles = training_data.smiles
 
     data_path = Path(params["data_path"])
     for subdir in data_path.iterdir():
@@ -111,7 +102,7 @@ if __name__ == "__main__":
 
             n_valid = compute_validity(mols)
             n_unique = compute_uniqueness(mols)
-            n_novel = compute_novelty(mols, reference_mols)
+            n_novel = compute_novelty(mols, reference_smiles)
 
             with open(os.path.join(subdata_path, "evaluation_results.txt"), "w") as f:
                 f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
