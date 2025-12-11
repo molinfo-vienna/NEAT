@@ -91,7 +91,7 @@ class MoleculeBuilder:
             xyz_block = self.create_xyz_block(x_mol, pos_mol)
             mol = MolFromXYZBlock(xyz_block)
             valid_charge = False
-            for charge in [0, 1, -1, 2, -2, 3, 4, 5, -3]:
+            for charge in [0]:  # , 1, -1, 2, -2, 3, 4, 5, -3]:
                 try:
                     rdDetermineBonds.DetermineBonds(mol, charge=charge)
                     valid_charge = True

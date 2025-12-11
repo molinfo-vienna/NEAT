@@ -17,6 +17,7 @@ RDLogger.DisableLog("rdApp.*")
 
 SEED = 0
 
+
 class QM9DataSet(InMemoryDataset):
     """QM9 dataset.
 
@@ -35,6 +36,7 @@ class QM9DataSet(InMemoryDataset):
             indicating whether the data object should be included in the final
             dataset. (default: :obj:`None`)
     """
+
     def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
         super().__init__(root, transform, pre_transform, pre_filter)
         self.root = root
@@ -43,7 +45,7 @@ class QM9DataSet(InMemoryDataset):
     @property
     def raw_file_names(self):
         return ["dsgdb9nsd.xyz.tar.bz2", "uncharacterized.txt"]
-    
+
     @property
     def processed_file_names(self):
         return ["qm9.pt"]
@@ -61,7 +63,7 @@ class QM9DataSet(InMemoryDataset):
         s = s.rstrip(",;")
         if "*^" in s:
             s = s.replace("*^", "e")
-        s = re.sub(r'[×x]\s*10\^([+-]?\d+)', r'e\1', s)
+        s = re.sub(r"[×x]\s*10\^([+-]?\d+)", r"e\1", s)
         s = s.replace(" ", "")
         return s
 
@@ -70,9 +72,13 @@ class QM9DataSet(InMemoryDataset):
         try:
             return float(s)
         except Exception as e:
-            raise ValueError(f"Cannot parse float from token {tok!r} (normalized {s!r})") from e
+            raise ValueError(
+                f"Cannot parse float from token {tok!r} (normalized {s!r})"
+            ) from e
 
-    def parse_xyz_atoms(self, lines: List[str]) -> Tuple[int, List[Tuple[str, float, float, float]], str]:
+    def parse_xyz_atoms(
+        self, lines: List[str]
+    ) -> Tuple[int, List[Tuple[str, float, float, float]], str]:
         """
         Parse the XYZ atom section.
         Returns (n_atoms, atoms, name_line) where atoms is a list of (symbol, x, y, z).
@@ -92,13 +98,13 @@ class QM9DataSet(InMemoryDataset):
 
         name_line = lines[1].rstrip("\n") if len(lines) > 1 else ""
 
-        atom_lines = lines[2:2 + n]
+        atom_lines = lines[2 : 2 + n]
         if len(atom_lines) < n:
             raise ValueError(f"Expected {n} atom lines, found {len(atom_lines)}")
 
         atoms = []
         for i, line in enumerate(atom_lines, start=1):
-            parts = re.split(r'\s+', line.strip())
+            parts = re.split(r"\s+", line.strip())
             if len(parts) < 4:
                 raise ValueError(f"Atom line {i} malformed: {line!r}")
             symbol = parts[0]
@@ -107,11 +113,15 @@ class QM9DataSet(InMemoryDataset):
                 y = self.safe_float(parts[2])
                 z = self.safe_float(parts[3])
             except Exception as e:
-                raise ValueError(f"Coordinates not parseable on atom line {i}: {line!r}") from e
+                raise ValueError(
+                    f"Coordinates not parseable on atom line {i}: {line!r}"
+                ) from e
             atoms.append((symbol, x, y, z))
         return n, atoms, name_line
 
-    def build_rdkit_mol_from_atoms(self, n: int, atoms: List[Tuple[str, float, float, float]], name: str) -> Chem.Mol:
+    def build_rdkit_mol_from_atoms(
+        self, n: int, atoms: List[Tuple[str, float, float, float]], name: str
+    ) -> Chem.Mol:
         """
         Build an RDKit molecule with a conformer from a list of atoms and coordinates using an XYZ block,
         then infer bonds with rdDetermineBonds and sanitize the molecule.
@@ -131,7 +141,7 @@ class QM9DataSet(InMemoryDataset):
     @staticmethod
     def extract_id_from_filename(path: str) -> Optional[int]:
         """Extract integer ID from filenames like dsgdb9nsd_133885.xyz."""
-        m = re.search(r'_(\d+)\.xyz$', os.path.basename(path))
+        m = re.search(r"_(\d+)\.xyz$", os.path.basename(path))
         return int(m.group(1)) if m else None
 
     @staticmethod
@@ -148,13 +158,18 @@ class QM9DataSet(InMemoryDataset):
                 if not s:
                     continue
                 # Skip headers and separator lines
-                if s.startswith("=") or s.startswith("#") or s.lower().startswith("list of") or "smiles" in s.lower():
+                if (
+                    s.startswith("=")
+                    or s.startswith("#")
+                    or s.lower().startswith("list of")
+                    or "smiles" in s.lower()
+                ):
                     continue
                 # Capture a leading integer (possibly with padding)
-                m = re.match(r'^(\d+)', s)
+                m = re.match(r"^(\d+)", s)
                 if not m:
                     # Sometimes the index is right-aligned: capture first integer anywhere
-                    m = re.search(r'(^|\s)(\d+)', s)
+                    m = re.search(r"(^|\s)(\d+)", s)
                     if m:
                         idx = int(m.group(2))
                         exclude.add(idx)
@@ -170,26 +185,30 @@ class QM9DataSet(InMemoryDataset):
 
         mol_id = self.extract_id_from_filename(path)
         n, atoms, name_line = self.parse_xyz_atoms(lines)
-        mol = self.build_rdkit_mol_from_atoms(n, atoms, name_line or os.path.basename(path))
+        mol = self.build_rdkit_mol_from_atoms(
+            n, atoms, name_line or os.path.basename(path)
+        )
 
         return (mol_id, mol)
-    
+
     def process(self):
         # Load vocabulary
-        vocab_path = "/home/rjacob/MolGen/scripts/qm9_vocab.yaml"
+        vocab_path = "/data/sharedXL/projects/Daniel/MolGen/scripts/qm9_vocab.yaml"
         try:
             with open(vocab_path, "r") as file:
                 self.vocabulary = yaml.safe_load(file)
         except yaml.YAMLError as e:
             logging.error(f"Error loading vocabulary YAML file: {e}")
-        
+
         # Load uncharacterized IDs to exclude (3054 molecules)
         exclude_set = self.parse_uncharacterized_ids(self.raw_paths[1])
 
         data_list = []
 
         # Parse all .xyz files
-        for root, _, files in os.walk("/home/rjacob/MolGen/data/QM9/raw/xyz_files"):
+        for root, _, files in os.walk(
+            "/data/sharedXL/projects/Daniel/MolGen/data/QM9/raw/xyz_files"
+        ):
             for file in tqdm(files):
                 if file.lower().endswith(".xyz"):
                     path = os.path.join(root, file)
@@ -227,7 +246,14 @@ class QM9DataSet(InMemoryDataset):
             )
 
             # 3D coordinates centered at origin
-            pos = torch.tensor(mol.GetConformer().GetPositions(), dtype=torch.float32)
+            conf = mol.GetConformer()
+            n = mol.GetNumAtoms()
+            pos = torch.zeros((n, 3), dtype=torch.float32)
+            for i in range(n):
+                p = conf.GetAtomPosition(i)  # returns RDKit Point3D
+                pos[i, 0] = p.x
+                pos[i, 1] = p.y
+                pos[i, 2] = p.z
             pos = pos - pos.mean(dim=0, keepdim=True)
 
             # Bond information for data augmentation during training
@@ -301,7 +327,7 @@ class QM9DataSet(InMemoryDataset):
 
         # Slice indices
         train_idx = perm[:n_train]
-        val_idx = perm[n_train:n_train + n_val]
-        test_idx = perm[n_train + n_val:]
+        val_idx = perm[n_train : n_train + n_val]
+        test_idx = perm[n_train + n_val :]
 
         return {"train": train_idx, "val": val_idx, "test": test_idx}

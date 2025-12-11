@@ -105,7 +105,7 @@ def training(args: argparse.Namespace) -> None:
         LearningRateMonitor(logging_interval="epoch"),
     ]
     trainer = Trainer(
-        devices=[3],
+        devices=[0],
         max_epochs=params["max_epochs"],
         accelerator="gpu",
         logger=tb_logger,
