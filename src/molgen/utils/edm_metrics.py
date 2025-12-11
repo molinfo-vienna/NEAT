@@ -830,6 +830,8 @@ def edm_metrics(x, pos, batch, dataset):
     elif dataset == "geom":
         dataset_info = geom_with_h
 
+    mapping = dataset_info["mapping"]  # This is only for QUETZAL
+
     count_mol_stable = 0
     count_atm_stable = 0
     count_mol_total = batch.max().item() + 1

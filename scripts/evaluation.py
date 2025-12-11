@@ -1,14 +1,13 @@
 import argparse
 import os
-from logging import root
 from pathlib import Path
 
 import py3Dmol
 import rdkit
 import yaml
-from rdkit.Chem import Draw, MolToSmiles, rdDepictor
-from rdkit.Chem.AllChem import RemoveHs
+from rdkit.Chem import AllChem, Draw, MolToSmiles, rdDepictor, SDMolSupplier
 
+from molgen.dataset import DataModule
 from molgen.model.molecule_builder import MoleculeBuilder
 from molgen.utils.edm_metrics import edm_metrics
 
@@ -32,6 +31,17 @@ def compute_uniqueness(mols):
             smiles = MolToSmiles(mol, canonical=True)
             unique_smiles.add(smiles)
     return len(unique_smiles)
+
+
+def compute_novelty(generated_mols, reference_smiles):
+    unique_generated_smiles = set()
+    for mol in generated_mols:
+        if mol is not None:
+            smiles = MolToSmiles(mol, canonical=True)
+            unique_generated_smiles.add(smiles)
+    intersection = unique_generated_smiles.intersection(set(reference_smiles))
+    num_novel = len(unique_generated_smiles) - len(intersection)
+    return num_novel
 
 
 def parseArgs() -> argparse.Namespace:
@@ -64,6 +74,15 @@ if __name__ == "__main__":
         open(CONFIG_FILE_PATH, "r"),
         Loader=yaml.FullLoader,
     )
+
+    DATA_ROOT = os.path.join(ROOT, "data", params["data_set"])
+    datamodule = DataModule(DATA_ROOT)
+    datamodule.setup()
+    splits = datamodule.full_data.get_qm9_splits()
+    training_idxs = splits["train"]
+    training_data = datamodule.full_data.index_select(training_idxs)
+    reference_smiles = training_data.smiles
+
     data_path = Path(params["data_path"])
     for subdir in data_path.iterdir():
         if subdir.is_dir() and subdir.name.startswith("seed"):
@@ -83,6 +102,7 @@ if __name__ == "__main__":
 
             n_valid = compute_validity(mols)
             n_unique = compute_uniqueness(mols)
+            n_novel = compute_novelty(mols, reference_smiles)
 
             with open(os.path.join(subdata_path, "evaluation_results.txt"), "w") as f:
                 f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
@@ -97,6 +117,7 @@ if __name__ == "__main__":
                 f.write(
                     f"xyz2mol valid x unique: {(n_valid/len(mols))*(n_unique/n_valid)*100:.2f}%\n"
                 )
+                f.write(f"xyz2mol novel: {n_novel/len(mols)*100:.2f}%\n")
                 f.write(f"Data set: {params['data_set']}\n")
                 f.write(f"RDKit version: {rdkit.__version__}\n")
 
@@ -114,7 +135,7 @@ if __name__ == "__main__":
                     mols_2d.append(None)
                 else:
                     rdDepictor.Compute2DCoords(mol)
-                    mol = RemoveHs(mol)
+                    mol = AllChem.RemoveHs(mol)
                     mols_2d.append(mol)
 
             img = Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))

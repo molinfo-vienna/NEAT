@@ -37,7 +37,7 @@ class DataSet(InMemoryDataset):
 
     @property
     def processed_file_names(self):
-        return ["qm9.pt"]
+        return ["qm9.pt", "_not_sanitized_idx.pt"]
 
     def download(self):
         raw_path = os.path.join(self.root, "raw")
@@ -125,9 +125,7 @@ class DataSet(InMemoryDataset):
             if data is not None:
                 data_list.append(data)
                 if not sanitized:
-                    not_sanitized.append(idx)
-
-        data_list = [data for data in data_list if data is not None]
+                    not_sanitized.append(idx)   
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
@@ -136,34 +134,35 @@ class DataSet(InMemoryDataset):
             data_list = [self.pre_transform(data) for data in data_list]
 
         self.save(data_list, self.processed_paths[0])
-        not_sanitized = torch.tensor(not_sanitized, dtype=torch.long)
-        torch.save(
-            not_sanitized,
-            os.path.join(self.root, "processed", "_not_sanitized_idx.pt"),
-        )
+        torch.save(torch.tensor(not_sanitized, dtype=torch.long), self.processed_paths[1])
 
     @staticmethod
     def try_sanitize_molecule(mol):
+        """Attempt to sanitize a molecule.
+
+        Args:
+            mol (rdkit.Chem.Mol): The molecule to sanitize.
+
+        Returns:
+            mol, bool: The original molecule and a boolean flag indicating whether sanitization was successful.
+        """
         try:
-            # Attempt to sanitize the molecule
             Chem.SanitizeMol(mol)
             return (
                 mol,
                 True,
-            )  # Return the molecule and a flag indicating successful sanitization
+            )
         except Exception as e:
-            # If sanitization fails, flag it and continue
             logging.warning(f"Sanitization failed for molecule: {e}")
             return (
                 mol,
                 False,
-            )  # Return the molecule and a flag indicating sanitization failure
+            )
 
     def process_molecule(self, mol):
         try:
-            # Some molecules contain multiple fragements, here we pic the largest one
+            # Handle disconnected molecules by keeping only the largest fragment
             frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=False)
-
             if len(frags) > 1:
                 sanitized = False
                 mol = max(frags, key=lambda frag: frag.GetNumAtoms())
@@ -172,51 +171,31 @@ class DataSet(InMemoryDataset):
             # mol = Chem.AddHs(mol)
             # mol, sanitized = DataSet.try_sanitize_molecule(mol)
 
-            # Create a tensor for atomic numbers and hybridization states
+            # Canonical SMILES
+            smiles = Chem.MolToSmiles(mol, canonical=True)
+
+            # Atomic number OHE
             x = torch.tensor(
                 [self.vocabulary[atom.GetAtomicNum()] for atom in mol.GetAtoms()],
                 dtype=torch.long,
             )
 
-            # Node positions: 3D coordinates
+            # 3D coordinates centered at origin
             pos = torch.tensor(mol.GetConformer().GetPositions(), dtype=torch.float32)
             pos = pos - pos.mean(dim=0, keepdim=True)
 
-            # Edge index: Bond connections
+            # Bond information for data augmentation during training
+            # Note that the generation does not use bond information
             edge_index = []
-            edge_attr = []
-
             for bond in mol.GetBonds():
                 i = bond.GetBeginAtomIdx()
                 j = bond.GetEndAtomIdx()
                 edge_index.append((i, j))
                 edge_index.append((j, i))
 
-                # Bond attributes: OHE for bond type, aromaticity, and ring membership
-                bond_type = bond.GetBondType()
-                bond_type_ohe = {
-                    Chem.rdchem.BondType.SINGLE: [1, 0, 0, 0],
-                    Chem.rdchem.BondType.DOUBLE: [0, 1, 0, 0],
-                    Chem.rdchem.BondType.TRIPLE: [0, 0, 1, 0],
-                    Chem.rdchem.BondType.AROMATIC: [0, 0, 0, 1],
-                }.get(
-                    bond_type, [0, 0, 0, 0]
-                )  # Default to [0, 0, 0, 0] if bond type is unknown
-
-                is_aromatic = int(bond.GetIsAromatic())
-                in_ring = int(bond.IsInRing())
-
-                # Combine bond attributes
-                edge_attr.append(bond_type_ohe + [is_aromatic, in_ring])
-                edge_attr.append(
-                    bond_type_ohe + [is_aromatic, in_ring]
-                )  # Add reverse bond
-
-            # Convert edge_index and edge_attr to tensors
             edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-            edge_attr = torch.tensor(edge_attr, dtype=torch.float32)
 
-            # Generate molecular graph
+            # Initialize molecular graph
             G = nx.Graph()
             for i, j in edge_index.t().tolist():
                 G.add_edge(i, j)
@@ -227,13 +206,12 @@ class DataSet(InMemoryDataset):
                 [eccentricities[node] for node in range(len(G.nodes))], dtype=torch.long
             )
 
-            # Create PyG Data object
             data = Data(
                 x=x,
                 pos=pos,
                 edge_index=edge_index,
-                edge_attr=edge_attr,
                 eccentricity=eccentricity_tensor,
+                smiles=smiles,
             )
 
             return data, sanitized
