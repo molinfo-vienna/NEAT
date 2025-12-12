@@ -132,7 +132,10 @@ class NEAT(LightningModule):
 
         # (1) Compute the representation of the source atom sets with the transformer
         source_set_representation = self.compute_source_set_representation(
-            data.x_source, data.pos_source, data.batch_source, device
+            data.x[data.source_ptr],
+            data.pos[data.source_ptr],
+            data.batch[data.source_ptr],
+            device,
         )  # [batch_size, n_embd]
 
         # (2) Compute the logits for the atom type prediction
@@ -142,15 +145,19 @@ class NEAT(LightningModule):
 
         # (3) Calculate a cross-entropy loss for atom type prediction
         loss_ce = self.compute_atom_type_loss(
-            logits, data.x_target, data.batch_target, data.stop_tokens, device
+            logits,
+            data.x[data.target_ptr],
+            data.batch[data.target_ptr],
+            data.stop_tokens,
+            device,
         )
 
         # (4) Calculate a flow matching loss for the target atom positions
         loss_fm = self.compute_flow_matching_loss(
-            data.x_target,
-            data.pos_target,
+            data.x[data.target_ptr],
+            data.pos[data.target_ptr],
             data.pos_random,
-            data.batch_target,
+            data.batch[data.target_ptr],
             source_set_representation,
             device,
         )
