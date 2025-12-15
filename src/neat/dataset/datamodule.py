@@ -1,4 +1,5 @@
 import functools
+import os
 
 import torch
 from lightning import LightningDataModule
@@ -8,6 +9,7 @@ from torch_geometric.data import Batch
 
 from .augmentation import RandomRotationAugmentation
 from .dataset import QM9DataSet
+from .dataset_geom import GEOMDataSet
 from .splitting import SourceTargetSplitter
 
 
@@ -76,13 +78,15 @@ class DataModule(LightningDataModule):
     def __init__(
         self,
         training_data_dir: str,
+        data_set: str = "QM9",
         batch_size: int = 32,
         source_target_split: str = "cyclic",
         noise_std: float = 1.4,
         num_workers: int = 1,
     ) -> None:
         super(DataModule, self).__init__()
-        self.training_data_dir = training_data_dir
+        self.training_data_path = os.path.join(training_data_dir, data_set.upper())
+        self.data_set = data_set.upper()
         self.batch_size = batch_size
         self.source_target_split = source_target_split
         self.noise_std = noise_std
@@ -96,14 +100,31 @@ class DataModule(LightningDataModule):
 
     def setup(self, stage: str = "fit") -> None:
         if stage == "fit":
-            self.full_data = QM9DataSet(self.training_data_dir, transform=None)
-            splits = self.full_data.get_splits()
-            self.training_data = self.full_data[splits["train"]]
-            self.validation_data = self.full_data[splits["val"]]
-            self.test_data = self.full_data[splits["test"]]
-            print(f"Number of training graphs: {len(self.training_data)}")
-            print(f"Number of validation graphs: {len(self.validation_data)}")
-            print(f"Number of test graphs: {len(self.test_data)}")
+            if self.data_set == "QM9":
+                self.full_data = QM9DataSet(self.training_data_path, transform=None)
+                splits = self.full_data.get_splits()
+                self.training_data = self.full_data[splits["train"]]
+                self.validation_data = self.full_data[splits["val"]]
+                self.test_data = self.full_data[splits["test"]]
+                print(f"Number of training graphs: {len(self.training_data)}")
+                print(f"Number of validation graphs: {len(self.validation_data)}")
+                print(f"Number of test graphs: {len(self.test_data)}")
+            elif self.data_set == "GEOM":
+                print("Using GEOM dataset.")
+                self.full_data = GEOMDataSet(self.training_data_path, transform=None)
+
+                print("Using GEOM random splits.")
+                splits = self.full_data.get_random_splits()
+                self.training_data = self.full_data[splits["train"]]
+                self.validation_data = self.full_data[splits["val"]]
+                self.test_data = self.full_data[splits["test"]]
+
+                print(f"Number of training graphs: {len(self.training_data)}")
+                print(f"Number of validation graphs: {len(self.validation_data)}")
+                print(f"Number of test graphs: {len(self.test_data)}")
+
+            else:
+                raise ValueError(f"Unknown data_set: {self.data_set}")
 
     def train_dataloader(self, shuffle_data=True) -> DataLoader:
         return DataLoader(

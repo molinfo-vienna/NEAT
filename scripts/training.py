@@ -35,9 +35,10 @@ def training(args: argparse.Namespace) -> None:
         Loader=yaml.FullLoader,
     )
 
-    DATA_ROOT = os.path.join(ROOT, "data", params["data_set"])
+    DATA_ROOT = os.path.join(ROOT, "data")
     datamodule = DataModule(
         DATA_ROOT,
+        params["data_set"],
         batch_size=params["batch_size"],
         source_target_split=params["source_target_split"],
         noise_std=params["noise_std"],
