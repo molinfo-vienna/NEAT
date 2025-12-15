@@ -65,12 +65,14 @@ def generate(args: argparse.Namespace) -> None:
                     num_time_steps=params["num_time_steps"],
                     prefix_x=prefix_x,
                     prefix_pos=prefix_pos,
+                    time_step_spacing=params["time_step_spacing"],
                 )
             else:
                 x, pos, batch = model.generate(
                     batch_size=params["num_molecules"],
                     max_atoms=params["max_atoms"],
                     num_time_steps=params["num_time_steps"],
+                    time_step_spacing=params["time_step_spacing"],
                 )
 
         out_dir = os.path.join(params["output_path"], f"seed_{seed}")

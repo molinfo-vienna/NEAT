@@ -723,6 +723,7 @@ class NEAT(LightningModule):
         device: torch.device = torch.device("cuda"),
         prefix_x: Tensor = None,
         prefix_pos: Tensor = None,
+        time_step_spacing: str = "linear",
     ) -> tuple[Tensor, Tensor, Tensor]:
         """
         Generate a molecule using the flow matching network.
@@ -807,7 +808,11 @@ class NEAT(LightningModule):
             source_set_representation = source_set_representation[~x_next_mask]
             # (6.9) Calculate the positions of the newly predicted atoms with flow matching
             pos_next = self.calculate_positions(
-                x_next, source_set_representation, num_time_steps, device
+                x_next,
+                source_set_representation,
+                num_time_steps,
+                device,
+                time_step_spacing,
             )
 
             # (6.10) Update the x, pos, and batch source tensors
@@ -855,7 +860,7 @@ class NEAT(LightningModule):
         source_set_representation: Tensor,
         num_time_steps: int,
         device: torch.device,
-        integration_method: str = "euler",
+        time_step_spacing: str = "linear",
     ) -> Tensor:
         """
         Method to calculate the positions of the newly predicted atoms with flow matching.
@@ -875,164 +880,48 @@ class NEAT(LightningModule):
             x_next.shape[0], 3, device=device
         )
 
-        time_steps = torch.linspace(0, 1, num_time_steps, device=device)
-        # time_steps = torch.cumsum(
-        #    torch.arange(num_time_steps, 0, -1, device=device, dtype=torch.long), dim=0
-        # )
-        # time_steps = torch.cat([torch.tensor([0], device=device), time_steps])
-        # time_steps = time_steps / time_steps[-1]
+        if time_step_spacing == "linear":
+            time_steps = torch.linspace(0, 1, num_time_steps, device=device)
+
+        elif time_step_spacing == "logarithmic":
+            time_steps = 1.0 - torch.logspace(
+                -2, 0, num_time_steps + 1, device=device
+            ).flip(0)
+            time_steps = time_steps - torch.min(time_steps)
+            time_steps = time_steps / torch.max(time_steps)
+
+        elif time_step_spacing == "quadratic":
+            dts = (
+                torch.arange(
+                    -num_time_steps // 2,
+                    num_time_steps // 2 + 1,
+                    1,
+                    device=device,
+                    dtype=torch.long,
+                )
+            ) ** 2 + num_time_steps * 2
+            dts = dts.float() / dts.sum()
+            time_steps = torch.cumsum(dts, dim=0)
+            time_steps = torch.cat([torch.tensor([0], device=device), time_steps])
+
+        else:
+            raise ValueError(
+                f"Invalid time_step_spacing: {time_step_spacing}. Must be 'linear', 'logarithmic', or 'quadratic'."
+            )
+
         dts = time_steps[1:] - time_steps[:-1]
 
-        if integration_method == "euler":
-            # (2) Find position of the atoms via flow matching using Euler method
-            for dt, time_step in zip(dts, time_steps[:-1]):
-                # for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
-                time_step = time_step.expand(x_next.shape[0])
-                delta_pos = dt * self.compute_vector_field(
-                    x_next,
-                    pos_next,
-                    time_step,
-                    source_set_representation,
-                    device=device,
-                )
-                pos_next = pos_next + delta_pos
-
-        elif integration_method == "euler_maruyama":
-
-            def diffusion_coefficient(t, epsilon=0.1, w_cutoff=0.9):
-                # determine diffusion coefficient
-                w = (1.0 - t) / (t + epsilon)
-                if t >= w_cutoff:
-                    w = torch.zeros_like(t)
-                return w
-
-            # (2) Find position of the atoms via flow matching using Euler method
-            for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
-                dt = 1 / num_time_steps
-                eps = torch.randn_like(pos_next)
-                velocity = self.compute_vector_field(
-                    x_next,
-                    pos_next,
-                    time_step.expand(x_next.shape[0]),
-                    source_set_representation,
-                    device=device,
-                )
-                # score = time_step * velocity - pos_next / (1 - time_step)
-                score = self.compute_score_from_velocity(velocity, pos_next, time_step)
-                diff_coeff = diffusion_coefficient(time_step)
-                drift = velocity + diff_coeff * score
-                mean_pos = pos_next + drift * dt
-                pos_next = mean_pos + torch.sqrt(2.0 * diff_coeff * dt * 0.3) * eps
-
-        elif integration_method == "rk4":
-            # (2) Find position of the atoms via flow matching using RK4 method
-            for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
-                time_step = time_step.expand(x_next.shape[0])
-                dt = 1 / num_time_steps  # Time step size
-
-                # Compute RK4 intermediate steps
-                k1 = self.compute_vector_field(
-                    x_next,
-                    pos_next,
-                    time_step,
-                    source_set_representation,
-                    device=device,
-                )
-                k2 = self.compute_vector_field(
-                    x_next,
-                    pos_next + 0.5 * dt * k1,
-                    time_step + 0.5 * dt,
-                    source_set_representation,
-                    device=device,
-                )
-                k3 = self.compute_vector_field(
-                    x_next,
-                    pos_next + 0.5 * dt * k2,
-                    time_step + 0.5 * dt,
-                    source_set_representation,
-                    device=device,
-                )
-                k4 = self.compute_vector_field(
-                    x_next,
-                    pos_next + dt * k3,
-                    time_step + dt,
-                    source_set_representation,
-                    device=device,
-                )
-
-                # Update position using RK4 formula
-                delta_pos = (dt / 6) * (k1 + 2 * k2 + 2 * k3 + k4)
-                pos_next = pos_next + delta_pos
-
-            else:
-                raise ValueError(f"Unknown integration method: {integration_method}")
-
-        return pos_next
-
-    def compute_score_from_velocity(self, v_t, y_t, t):
-        # t = right_pad_dims_to(y_t, t)
-        alpha_t, d_alpha_t = t, 1
-        sigma_t, d_sigma_t = 1 - t, -1
-        mean = y_t
-        reverse_alpha_ratio = alpha_t / d_alpha_t
-        var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
-        score = (reverse_alpha_ratio * v_t - mean) / var
-        return score
-
-    def calculate_positional_trajectory(
-        self,
-        x_next: Tensor,
-        source_set_representation: Tensor,
-        num_time_steps: int,
-        device: torch.device,
-        grid: Tensor,
-    ) -> Tensor:
-        """
-        Method to calculate the positions of the newly predicted atoms with flow matching.
-
-        Args:
-            x_next (Tensor): The atom types of the newly predicted atoms. shape: [n_atoms, 1]
-            source_set_representation (Tensor): The representation of the source sets. shape: [n_atoms, n_embd]
-            num_time_steps (int): The number of time steps to use for the flow matching.
-            device (torch.device): The device to use for computations.
-            integration_method (str): The integration method to use for the flow matching.
-
-        Returns:
-            Tensor: The positions of the newly predicted atoms. shape: [n_atoms, 3]
-        """
-        # (1) Initialize next atoms' position with a random position
-        pos_next = self.hparams.noise_std * torch.randn(
-            x_next.shape[0], 3, device=device
-        )
-        pos_trajectory = []
-        grid_trajectory = []
-
-        for i, time_step in enumerate(
-            torch.linspace(0, 1, num_time_steps, device=device)[:-1]
-        ):
+        # (2) Find position of the atoms via flow matching using Euler method
+        for dt, time_step in zip(dts, time_steps[:-1]):
+            # for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
             time_step = time_step.expand(x_next.shape[0])
-            dt = 1 / num_time_steps
-            velocity = self.compute_vector_field(
+            delta_pos = dt * self.compute_vector_field(
                 x_next,
                 pos_next,
                 time_step,
                 source_set_representation,
                 device=device,
             )
-            if i % 5 == 0:
-                grid_velocity = self.compute_vector_field(
-                    x_next.expand(grid.shape[0]),
-                    grid,
-                    time_step.expand(grid.shape[0]),
-                    source_set_representation.expand(grid.shape[0], -1),
-                    device=device,
-                )
-                grid_trajectory.append(grid_velocity.unsqueeze(0))
-                pos_trajectory.append(pos_next)
-            delta_pos = dt * velocity
             pos_next = pos_next + delta_pos
 
-        pos_trajectory = torch.cat(pos_trajectory, dim=0)
-        grid_trajectory = torch.cat(grid_trajectory, dim=0)
-
-        return pos_next, pos_trajectory, grid_trajectory
+        return pos_next
