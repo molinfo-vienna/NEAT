@@ -262,8 +262,10 @@ class SourceTargetSplitter:
         pos_target = data.pos[target_set_final_mask]
         batch_target = data.batch[target_set_final_mask]
 
-        atom_count_source = global_add_pool(source_set_mask.int(), data.batch)
-        stop_tokens = atom_count_source == atom_counts
+        stop_tokens = ~(torch.isin(torch.arange(0, atom_counts.shape[0]), torch.unique(batch_target)))
+
+        #atom_count_source = global_add_pool(source_set_mask.int(), data.batch)
+        #stop_tokens = atom_count_source == atom_counts
 
         # This is for debugging purposes
         # data_point = data[0]

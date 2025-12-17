@@ -10,15 +10,16 @@ class MoleculeBuilder:
     Builds RDKit molecules from tensors.
     """
 
-    def __init__(self):
+    def __init__(self, vocab="QM9") -> None:
         super().__init__()
-        self.atom_type_to_element = {
-            1: "H",  # Hydrogen
-            2: "C",  # Carbon
-            3: "N",  # Nitrogen
-            4: "O",  # Oxygen
-            5: "F",  # Fluorine
-        }
+        if vocab == "QM9":
+            self.atom_type_to_element = {
+                1: "H",  # Hydrogen
+                2: "C",  # Carbon
+                3: "N",  # Nitrogen
+                4: "O",  # Oxygen
+                5: "F",  # Fluorine
+            }
         # Only for QUETZAL (different vocabulary)
         # self.atom_type_to_element = {
         #     1: "H",  # Hydrogen
@@ -27,6 +28,27 @@ class MoleculeBuilder:
         #     8: "O",  # Oxygen
         #     9: "F",  # Fluorine
         # }
+        elif vocab == "GEOM":
+            self.atom_type_to_element = {
+                1: "H",
+                2: "B",
+                3: "C",
+                4: "N",
+                5: "O",
+                6: "F",
+                7: "Al",
+                8: "Si",
+                9: "P",
+                10: "S",
+                11: "Cl",
+                12: "As",
+                13: "Br",
+                14: "I",
+                15: "Hg",
+                16: "Bi",
+            }
+        else:
+            raise ValueError(f"Unsupported vocabulary: {vocab}")
 
     def load_tensor_from_file(
         self, files_path: str
@@ -91,7 +113,7 @@ class MoleculeBuilder:
             xyz_block = self.create_xyz_block(x_mol, pos_mol)
             mol = MolFromXYZBlock(xyz_block)
             valid_charge = False
-            for charge in [0]:  # , 1, -1, 2, -2, 3, 4, 5, -3]:
+            for charge in [0]:
                 try:
                     rdDetermineBonds.DetermineBonds(mol, charge=charge)
                     valid_charge = True

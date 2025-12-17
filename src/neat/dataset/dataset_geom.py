@@ -9,11 +9,28 @@ import yaml
 from rdkit import RDLogger
 from torch_geometric.data import Data, InMemoryDataset
 from tqdm import tqdm
-
+from rdkit import Chem
 
 RDLogger.DisableLog("rdApp.*")
 
 SEED = 0
+
+
+def largest_fragment_by_size(mol, use_heavy_atoms=True, sanitize_frags=True):
+    """
+    Returns the largest fragment of `mol` by atom count.
+    - use_heavy_atoms: count non-hydrogen atoms if True, else all atoms.
+    - sanitize_frags: sanitize the fragment molecules (usually True).
+    """
+    frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=sanitize_frags)
+    if not frags:
+        return None
+    key = (
+        (lambda m: m.GetNumHeavyAtoms())
+        if use_heavy_atoms
+        else (lambda m: m.GetNumAtoms())
+    )
+    return max(frags, key=key)
 
 
 def process_molecule(smiles, conformers, vocabulary, num_conformers=30):
@@ -22,6 +39,8 @@ def process_molecule(smiles, conformers, vocabulary, num_conformers=30):
         for mol in conformers:
             if len(conformer_list) >= num_conformers:
                 break
+
+            mol = largest_fragment_by_size(mol, use_heavy_atoms=True)
 
             if mol is None:
                 logging.warning(
@@ -114,11 +133,11 @@ class GEOMDataSet(InMemoryDataset):
         pre_transform=None,
         pre_filter=None,
         split="train",
-        num_conformers=30,
+        num_conformers=1,
     ):
-        super().__init__(root, transform, pre_transform, pre_filter)
         self.root = root
         self.num_conformers = num_conformers
+        super().__init__(root, transform, pre_transform, pre_filter)
         if split == "train":
             self.load(self.processed_paths[0])
         elif split == "val":

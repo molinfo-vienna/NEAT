@@ -718,7 +718,7 @@ class NEAT(LightningModule):
     def generate(
         self,
         batch_size: int = 1,
-        max_atoms: int = 100,
+        max_atoms: int = 150,
         num_time_steps: int = 30,
         device: torch.device = torch.device("cuda"),
         prefix_x: Tensor = None,
@@ -748,10 +748,19 @@ class NEAT(LightningModule):
             ).to(device)
         else:
             # (1) Sample initial atoms from the prior distribution of atom types in QM9
-            dist = torch.tensor(
-                [0.0000, 0.5109, 0.3517, 0.0580, 0.0780, 0.0014], device=device
-            )
-            x = torch.multinomial(dist, batch_size, replacement=True)  # [batch_size]
+            if self.hparams.data_set == "QM9":
+                dist = torch.tensor(
+                    [0.0000, 0.5109, 0.3517, 0.0580, 0.0780, 0.0014], device=device
+                )
+                x = torch.multinomial(
+                    dist, batch_size, replacement=True
+                )  # [batch_size]
+            elif self.hparams.data_set == "GEOM":
+                x = (
+                    torch.ones(batch_size, device=device, dtype=torch.long) * 3
+                )  # Carbon only
+            else:
+                raise ValueError(f"Unknown data set: {self.hparams.data_set}")
             # (2) Initialize starting positions with random ones
             pos = self.hparams.noise_std * torch.randn(batch_size, 3, device=device)
             # (3) Initialize the batch source tensor

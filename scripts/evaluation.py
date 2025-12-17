@@ -78,20 +78,17 @@ if __name__ == "__main__":
     )
 
     # Load preprocessed training data for computing novelty
-    DATA_ROOT = os.path.join(ROOT, "data", params["data_set"])
-    datamodule = DataModule(DATA_ROOT)
+    DATA_ROOT = os.path.join(ROOT, "data")
+    datamodule = DataModule(DATA_ROOT, data_set=params["data_set"])
     datamodule.setup()
-    splits = datamodule.full_data.get_splits()
-    training_idxs = splits["train"]
-    training_data = datamodule.full_data.index_select(training_idxs)
-    reference_smiles = training_data.smiles
+    reference_smiles = datamodule.training_data.smiles
 
     # Evaluate generated molecules across all available seeds
     data_path = Path(params["data_path"])
     for subdir in data_path.iterdir():
         if subdir.is_dir() and subdir.name.startswith("seed"):
             subdata_path = os.path.join(data_path, subdir.name)
-            builder = MoleculeBuilder()
+            builder = MoleculeBuilder(vocab=params["data_set"])
             x, pos, batch = builder.load_tensor_from_file(subdata_path)
 
             (
@@ -100,7 +97,7 @@ if __name__ == "__main__":
                 edm_valid,
                 edm_unique,
                 edm_invalid_idxs,
-            ) = edm_metrics(x, pos, batch, "qm9")
+            ) = edm_metrics(x, pos, batch, params["data_set"])
 
             mols = builder.generate_rdkit_molecules(x, pos, batch)
 

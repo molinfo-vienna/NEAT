@@ -91,7 +91,7 @@ def training(args: argparse.Namespace) -> None:
     )
 
     # Define the second ModelCheckpoint for molecular validity
-    generate_every_n_epochs = 50
+    generate_every_n_epochs = 20
     checkpoint_validity = ModelCheckpoint(
         monitor="val/validity",
         mode="max",

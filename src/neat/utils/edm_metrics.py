@@ -825,10 +825,12 @@ def build_xae_molecule(positions, atom_types, dataset_info, bond_orders=None):
 def edm_metrics(x, pos, batch, dataset):
     # atom/mol stability depends on the dataset
     # atom stability depends on the group of molecules - cannot be computed for individual molecules and mean-aggregated
-    if dataset == "qm9":
+    if dataset == "QM9":
         dataset_info = qm9_with_h
-    elif dataset == "geom":
+    elif dataset == "GEOM":
         dataset_info = geom_with_h
+    else:
+        raise ValueError("Dataset not recognized: " + dataset)
 
     mapping = dataset_info["mapping"]  # This is only for QUETZAL
 
