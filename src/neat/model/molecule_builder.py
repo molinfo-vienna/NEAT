@@ -2,7 +2,7 @@ import logging
 import os
 
 import torch
-from rdkit.Chem import Mol, MolFromXYZBlock, rdDetermineBonds
+from rdkit.Chem import Mol, rdDetermineBonds, rdmolfiles
 
 
 class MoleculeBuilder:
@@ -89,7 +89,7 @@ class MoleculeBuilder:
             pos_mol = pos[mask]
 
             xyz_block = self.create_xyz_block(x_mol, pos_mol)
-            mol = MolFromXYZBlock(xyz_block)
+            mol = rdmolfiles.MolFromXYZBlock(xyz_block)
             try:
                 rdDetermineBonds.DetermineBonds(mol, charge=0)
             except ValueError:
