@@ -100,7 +100,11 @@ def training(args: argparse.Namespace) -> None:
         every_n_epochs=generate_every_n_epochs,
     )
     callbacks = [
-        GenerationMonitor(num_samples=10000, every_n_epochs=generate_every_n_epochs),
+        GenerationMonitor(
+            num_samples=1000,
+            every_n_epochs=generate_every_n_epochs,
+            dataset=params["data_set"],
+        ),
         checkpoint_val_loss,
         checkpoint_validity,
         LearningRateMonitor(logging_interval="epoch"),

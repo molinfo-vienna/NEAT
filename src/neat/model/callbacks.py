@@ -3,13 +3,17 @@ from lightning import Callback, LightningModule, Trainer
 from rdkit import Chem
 
 from neat.model.molecule_builder import MoleculeBuilder
+from neat.utils.edm_metrics import edm_metrics
 
 
 class GenerationMonitor(Callback):
-    def __init__(self, num_samples: int = 10000, every_n_epochs: int = 50) -> None:
+    def __init__(
+        self, num_samples: int = 10000, every_n_epochs: int = 50, dataset: str = "QM9"
+    ) -> None:
         super().__init__()
         self.num_samples = num_samples
         self.every_n_epochs = every_n_epochs
+        self.dataset = dataset
 
     def on_train_start(self, trainer: Trainer, pl_module: LightningModule):
         pl_module.log(
@@ -36,12 +40,25 @@ class GenerationMonitor(Callback):
         ):
             return
         x, pos, batch = pl_module.generate(batch_size=self.num_samples)
-        builder = MoleculeBuilder(vocab=pl_module.hparams.data_set)
-        mols = builder.generate_rdkit_molecules(x, pos, batch)
-        n_valid = self.compute_validity(mols)
-        n_unique = self.compute_uniqueness(mols)
-        frac_valid = n_valid / self.num_samples
-        frac_unique = n_unique / n_valid if n_valid > 0 else 0.0
+
+        if self.dataset == "QM9":
+            builder = MoleculeBuilder(vocab=pl_module.hparams.data_set)
+            mols = builder.generate_rdkit_molecules(x, pos, batch)
+            n_valid = self.compute_validity(mols)
+            n_unique = self.compute_uniqueness(mols)
+            frac_valid = n_valid / self.num_samples
+            frac_unique = n_unique / n_valid if n_valid > 0 else 0.0
+
+        elif self.dataset == "GEOM":
+            (
+                _,
+                _,
+                frac_valid,
+                frac_unique,
+                _,
+            ) = edm_metrics(x.cpu(), pos.cpu(), batch.cpu(), self.dataset)
+        else:
+            raise ValueError(f"Unknown dataset: {self.dataset}")
 
         pl_module.log(
             "val/validity",

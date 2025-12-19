@@ -33,7 +33,7 @@ def largest_fragment_by_size(mol, use_heavy_atoms=True, sanitize_frags=True):
     return max(frags, key=key)
 
 
-def process_molecule(smiles, conformers, vocabulary, num_conformers=30):
+def process_molecule(smiles, conformers, vocabulary, num_conformers=5):
     try:
         conformer_list = []
         for mol in conformers:
@@ -133,7 +133,7 @@ class GEOMDataSet(InMemoryDataset):
         pre_transform=None,
         pre_filter=None,
         split="train",
-        num_conformers=1,
+        num_conformers=5,
     ):
         self.root = root
         self.num_conformers = num_conformers
