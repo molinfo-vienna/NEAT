@@ -13,11 +13,22 @@ def compute_prefix_x_pos_batch(
     """Compute x, pos, and batch tensors from the prefix smiles."""
 
     atomic_num_to_atom_type = {
-        1: 1,
-        6: 2,
-        7: 3,
-        8: 4,
-        9: 5,
+        1: 1,  # H
+        5: 2,  # B
+        6: 3,  # C
+        7: 4,  # N
+        8: 5,  # O
+        9: 6,  # F
+        13: 7,  # Al
+        14: 8,  # Si
+        15: 9,  # P
+        16: 10,  # S
+        17: 11,  # Cl
+        33: 12,  # As
+        35: 13,  # Br
+        53: 14,  # I
+        80: 15,  # Hg
+        83: 16,  # Bi
     }
 
     # Create RDKit molecule from SMILES
@@ -151,3 +162,58 @@ batch = batch[perm]
 # Save tensors
 path = os.path.join(ROOT, "cyclopropane")
 save_prefix_tensors(x, pos, batch, path)
+
+# ------------- Prepare ortho, meta and para-"empty" benzenes -------------
+
+prefix_smiles = "C1=CC=CC=C1"
+x, pos, batch = compute_prefix_x_pos_batch(prefix_smiles)
+
+# Remove ortho-hydrogen atoms to allow for growth
+mask = torch.ones_like(x, dtype=torch.bool)
+mask[6] = False  # Remove hydrogen atom at index 6
+mask[7] = False  # Remove hydrogen atom at index 7
+x_ortho = x[mask]
+pos_ortho = pos[mask]
+batch_ortho = batch[mask]
+
+# # Shuffle order of atoms to test permutation invariance
+# perm = torch.randperm(x_ortho.size(0))
+# x_ortho = x_ortho[perm]
+# pos_ortho = pos_ortho[perm]
+# batch_ortho = batch_ortho[perm]
+
+# Remove meta-hydrogen atoms to allow for growth
+mask = torch.ones_like(x, dtype=torch.bool)
+mask[6] = False  # Remove hydrogen atom at index 6
+mask[8] = False  # Remove hydrogen atom at index 8
+x_meta = x[mask]
+pos_meta = pos[mask]
+batch_meta = batch[mask]
+
+# # Shuffle order of atoms to test permutation invariance
+# perm = torch.randperm(x_meta.size(0))
+# x_meta = x_meta[perm]
+# pos_meta = pos_meta[perm]
+# batch_meta = batch_meta[perm]
+
+# Remove para-hydrogen atoms to allow for growth
+mask = torch.ones_like(x, dtype=torch.bool)
+mask[6] = False  # Remove hydrogen atom at index 6
+mask[9] = False  # Remove hydrogen atom at index 9
+x_para = x[mask]
+pos_para = pos[mask]
+batch_para = batch[mask]
+
+# # Shuffle order of atoms to test permutation invariance
+# perm = torch.randperm(x_para.size(0))
+# x_para = x_para[perm]
+# pos_para = pos_para[perm]
+# batch_para = batch_para[perm]
+
+# Save tensors
+path = os.path.join(ROOT, "benzene_ortho")
+save_prefix_tensors(x_ortho, pos_ortho, batch_ortho, path)
+path = os.path.join(ROOT, "benzene_meta")
+save_prefix_tensors(x_meta, pos_meta, batch_meta, path)
+path = os.path.join(ROOT, "benzene_para")
+save_prefix_tensors(x_para, pos_para, batch_para, path)
