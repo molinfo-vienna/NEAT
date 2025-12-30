@@ -59,6 +59,7 @@ def generate(args: argparse.Namespace) -> None:
                 prefix_x, prefix_pos, _ = builder.load_tensor_from_file(
                     params["prefix_path"]
                 )
+                prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
                 x, pos, batch = model.generate(
                     batch_size=params["num_molecules"],
                     max_atoms=params["max_atoms"],

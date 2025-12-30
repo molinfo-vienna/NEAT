@@ -756,9 +756,31 @@ class NEAT(LightningModule):
                     dist, batch_size, replacement=True
                 )  # [batch_size]
             elif self.hparams.data_set == "GEOM":
-                x = (
-                    torch.ones(batch_size, device=device, dtype=torch.long) * 3
-                )  # Carbon only
+                dist = torch.tensor(
+                    [
+                        0,
+                        4.4115e-01,
+                        1.0262e-06,
+                        4.0569e-01,
+                        6.4707e-02,
+                        6.6119e-02,
+                        4.8757e-03,
+                        0,
+                        7.2215e-07,
+                        9.3404e-05,
+                        1.2265e-02,
+                        4.0290e-03,
+                        0,
+                        1.0497e-03,
+                        1.9821e-05,
+                        0,
+                        7.6015e-08,
+                    ],
+                    device=device,
+                )
+                x = torch.multinomial(
+                    dist, batch_size, replacement=True
+                )  # [batch_size]
             else:
                 raise ValueError(f"Unknown data set: {self.hparams.data_set}")
             # (2) Initialize starting positions with random ones
@@ -870,6 +892,7 @@ class NEAT(LightningModule):
         num_time_steps: int,
         device: torch.device,
         time_step_spacing: str = "linear",
+        integration_method: str = "euler_maruyama",
     ) -> Tensor:
         """
         Method to calculate the positions of the newly predicted atoms with flow matching.
@@ -920,17 +943,54 @@ class NEAT(LightningModule):
 
         dts = time_steps[1:] - time_steps[:-1]
 
-        # (2) Find position of the atoms via flow matching using Euler method
-        for dt, time_step in zip(dts, time_steps[:-1]):
-            # for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
-            time_step = time_step.expand(x_next.shape[0])
-            delta_pos = dt * self.compute_vector_field(
-                x_next,
-                pos_next,
-                time_step,
-                source_set_representation,
-                device=device,
-            )
-            pos_next = pos_next + delta_pos
+        if integration_method == "euler":
+            # (2) Find position of the atoms via flow matching using Euler method
+            for dt, time_step in zip(dts, time_steps[:-1]):
+                # for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
+                time_step = time_step.expand(x_next.shape[0])
+                delta_pos = dt * self.compute_vector_field(
+                    x_next,
+                    pos_next,
+                    time_step,
+                    source_set_representation,
+                    device=device,
+                )
+                pos_next = pos_next + delta_pos
+        elif integration_method == "euler_maruyama":
+
+            def diffusion_coefficient(t, epsilon=0.1, w_cutoff=0.9):
+                # determine diffusion coefficient
+                w = (1.0 - t) / (t + epsilon)
+                if t >= w_cutoff:
+                    w = torch.zeros_like(t)
+                return w
+
+            # (2) Find position of the atoms via flow matching using Euler method
+            for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
+                dt = 1 / num_time_steps
+                eps = torch.randn_like(pos_next)
+                velocity = self.compute_vector_field(
+                    x_next,
+                    pos_next,
+                    time_step.expand(x_next.shape[0]),
+                    source_set_representation,
+                    device=device,
+                )
+                # score = time_step * velocity - pos_next / (1 - time_step)
+                score = self.compute_score_from_velocity(velocity, pos_next, time_step)
+                diff_coeff = diffusion_coefficient(time_step)
+                drift = velocity + diff_coeff * score
+                mean_pos = pos_next + drift * dt
+                pos_next = mean_pos + torch.sqrt(2.0 * diff_coeff * dt * 0.3) * eps
 
         return pos_next
+
+    def compute_score_from_velocity(self, v_t, y_t, t):
+        # t = right_pad_dims_to(y_t, t)
+        alpha_t, d_alpha_t = t, 1
+        sigma_t, d_sigma_t = 1 - t, -1
+        mean = y_t
+        reverse_alpha_ratio = alpha_t / d_alpha_t
+        var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
+        score = (reverse_alpha_ratio * v_t - mean) / var
+        return score
