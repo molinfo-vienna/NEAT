@@ -21,6 +21,7 @@ from torch_geometric.nn.pool import global_add_pool, global_mean_pool
 from .attention import Block
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
 from .simple_mlp import SimpleMLPAdaLN
+from ..dataset.augmentation import RandomRotationAugmentation
 
 
 class NEAT(LightningModule):
@@ -746,6 +747,9 @@ class NEAT(LightningModule):
             batch_source = torch.cat(
                 [torch.ones_like(prefix_x) * i for i in range(batch_size)]
             ).to(device)
+
+            rotation_augmentation = RandomRotationAugmentation()
+            pos = rotation_augmentation.rotate_graphs_randomly(pos, batch_source)
         else:
             # (1) Sample initial atoms from the prior distribution of atom types in QM9
             if self.hparams.data_set == "QM9":
@@ -966,8 +970,9 @@ class NEAT(LightningModule):
                 return w
 
             # (2) Find position of the atoms via flow matching using Euler method
-            for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
-                dt = 1 / num_time_steps
+            # for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
+            for dt, time_step in zip(dts, time_steps[:-1]):
+                # dt = 1 / num_time_steps
                 eps = torch.randn_like(pos_next)
                 velocity = self.compute_vector_field(
                     x_next,
