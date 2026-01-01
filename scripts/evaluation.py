@@ -188,7 +188,7 @@ if __name__ == "__main__":
     xyz2mol_valid_x_unique_x_novel_lst = []
 
     for subdir in data_path.iterdir():
-        if Path.is_dir(subdir):
+        if Path.is_dir(subdir) and subdir.name.startswith("seed"):
             results_file = os.path.join(subdir, "evaluation_results.txt")
         else:
             continue
