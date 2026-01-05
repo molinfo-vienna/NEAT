@@ -9,6 +9,7 @@ ROOT = os.path.join(os.getcwd(), "data", "prefixes")
 
 def compute_prefix_x_pos_batch(
     prefix_smiles: list[str],
+    xylene: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """Compute x, pos, and batch tensors from the prefix smiles."""
 
@@ -65,7 +66,16 @@ def compute_prefix_x_pos_batch(
     # Compute dummy batch tensor for compatibility with MoleculeBuilder.load_tensor_from_file()
     batch = torch.zeros(x.size(0), dtype=torch.long)
 
-    return x, pos, batch
+    if xylene:
+        xylene_hydrogen_indices = []
+        for i, atom in enumerate(mol.GetAtoms()):
+            if atom.GetSymbol() == "H":
+                for neighbor in atom.GetNeighbors():
+                    if neighbor.GetSymbol() == "C" and not neighbor.GetIsAromatic():
+                        xylene_hydrogen_indices.append(i)
+        return x, pos, batch, xylene_hydrogen_indices
+    else:
+        return x, pos, batch
 
 
 def save_prefix_tensors(
@@ -216,4 +226,44 @@ save_prefix_tensors(x_ortho, pos_ortho, batch_ortho, path)
 path = os.path.join(ROOT, "benzene_meta")
 save_prefix_tensors(x_meta, pos_meta, batch_meta, path)
 path = os.path.join(ROOT, "benzene_para")
+save_prefix_tensors(x_para, pos_para, batch_para, path)
+
+# ------------- Prepare ortho-, meta- and para-xylene -------------
+
+# Initialize ortho-xylene and remove methyl hydrogen atoms to allow for growth
+prefix_smiles = "C1(C)=C(C)C=CC=C1"
+x, pos, batch, xylene_hydrogen_indices = compute_prefix_x_pos_batch(prefix_smiles, xylene=True)
+mask = torch.ones_like(x, dtype=torch.bool)
+for idx in xylene_hydrogen_indices:
+    mask[idx] = False
+x_ortho = x[mask]
+pos_ortho = pos[mask]
+batch_ortho = batch[mask]
+
+# Initialize meta-xylene and remove methyl hydrogen atoms to allow for growth
+prefix_smiles = "C1(C)=CC(C)=CC=C1"
+x, pos, batch, xylene_hydrogen_indices = compute_prefix_x_pos_batch(prefix_smiles, xylene=True)
+mask = torch.ones_like(x, dtype=torch.bool)
+for idx in xylene_hydrogen_indices:
+    mask[idx] = False
+x_meta = x[mask]
+pos_meta = pos[mask]
+batch_meta = batch[mask]
+
+# Initialize para-xylene and remove methyl hydrogen atoms to allow for growth
+prefix_smiles = "C1(C)=CC=C(C)C=C1"
+x, pos, batch, xylene_hydrogen_indices = compute_prefix_x_pos_batch(prefix_smiles, xylene=True)
+mask = torch.ones_like(x, dtype=torch.bool)
+for idx in xylene_hydrogen_indices:
+    mask[idx] = False
+x_para = x[mask]
+pos_para = pos[mask]
+batch_para = batch[mask]
+
+# Save tensors
+path = os.path.join(ROOT, "xylene_ortho")
+save_prefix_tensors(x_ortho, pos_ortho, batch_ortho, path)
+path = os.path.join(ROOT, "xylene_meta")
+save_prefix_tensors(x_meta, pos_meta, batch_meta, path)
+path = os.path.join(ROOT, "xylene_para")
 save_prefix_tensors(x_para, pos_para, batch_para, path)
