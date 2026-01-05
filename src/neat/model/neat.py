@@ -719,8 +719,8 @@ class NEAT(LightningModule):
     def generate(
         self,
         batch_size: int = 1,
-        max_atoms: int = 150,
-        num_time_steps: int = 30,
+        max_atoms: int = 200,
+        num_time_steps: int = 60,
         device: torch.device = torch.device("cuda"),
         prefix_x: Tensor = None,
         prefix_pos: Tensor = None,
@@ -962,7 +962,7 @@ class NEAT(LightningModule):
                 pos_next = pos_next + delta_pos
         elif integration_method == "euler_maruyama":
 
-            def diffusion_coefficient(t, epsilon=0.1, w_cutoff=0.9):
+            def diffusion_coefficient(t, epsilon=1e-3, w_cutoff=0.9):
                 # determine diffusion coefficient
                 w = (1.0 - t) / (t + epsilon)
                 if t >= w_cutoff:
