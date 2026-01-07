@@ -3,6 +3,7 @@ import os
 
 import torch
 from rdkit.Chem import Mol, rdDetermineBonds, rdmolfiles
+from tqdm import tqdm
 
 
 class MoleculeBuilder:
@@ -92,6 +93,7 @@ class MoleculeBuilder:
         x: torch.Tensor,
         pos: torch.Tensor,
         batch: torch.Tensor,
+        progress_bar: bool = False,
     ) -> list[Mol]:
         """
         Generates RDKit molecules from tensors of atom types and positions.
@@ -104,8 +106,11 @@ class MoleculeBuilder:
         """
         mols = []
         unique_batches = batch.unique().tolist()
-
-        for batch_id in unique_batches:
+    
+        iterator = unique_batches
+        if progress_bar:
+            iterator = tqdm(unique_batches, desc="Generating RDKit molecules")
+        for batch_id in iterator:
             mask = batch == batch_id
             x_mol = x[mask]
             pos_mol = pos[mask]
@@ -115,9 +120,9 @@ class MoleculeBuilder:
             try:
                 rdDetermineBonds.DetermineBonds(mol, charge=0, maxIterations=10000)
             except ValueError:
-                logging.warning(
-                    f"Could not determine bonds for molecule in batch {batch_id} with neutral total charge."
-                )
+                # logging.warning(
+                #     f"Could not determine bonds for molecule in batch {batch_id} with neutral total charge."
+                # )
                 mol = None
             except Exception as e:
                 logging.warning(

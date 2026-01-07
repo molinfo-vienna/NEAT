@@ -108,7 +108,7 @@ if __name__ == "__main__":
                 edm_invalid_idxs,
             ) = edm_metrics(x, pos, batch, params["data_set"])
 
-            mols = builder.generate_rdkit_molecules(x, pos, batch)
+            mols = builder.generate_rdkit_molecules(x, pos, batch, progress_bar=True)
 
             (xyz2mol_valid, xyz2mol_valid_x_unique, xyz2mol_valid_x_unique_x_novel) = (
                 compute_validity_uniqueness_novelty(mols, reference_smiles)
