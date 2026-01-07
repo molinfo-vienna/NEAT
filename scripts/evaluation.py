@@ -6,7 +6,7 @@ import numpy as np
 import py3Dmol
 import rdkit
 import yaml
-from rdkit.Chem import AllChem, Draw, MolToSmiles, rdDepictor, SDMolSupplier
+from rdkit.Chem import AllChem, Draw, MolToSmiles, rdDepictor
 
 from neat.dataset import DataModule
 from neat.model.molecule_builder import MoleculeBuilder
@@ -18,6 +18,15 @@ NUM_MOLECULES_PER_ROW = 5
 
 
 def compute_validity_uniqueness_novelty(mols, reference_smiles):
+    """Compute validity, uniqueness and novelty ratio of generated molecules.
+
+    Args:
+        mols (List(Mol)): generated molecules
+        reference_smiles (List[str]): reference canonical SMILES strings for novelty computation
+
+    Returns:
+        Tuple[float, float, float]: validity, uniqueness, novelty ratios
+    """
     ref_set = set(reference_smiles)
     unique_smiles = set()
     num_valid = 0
