@@ -32,7 +32,7 @@ def generate(args: argparse.Namespace) -> None:
         Loader=yaml.FullLoader,
     )
 
-    checkpoints_dir = os.path.join(params["checkpoints_path"], "checkpoints")
+    checkpoints_dir = os.path.join(ROOT, params["checkpoints_path"], "checkpoints")
     pt_files = [
         f
         for f in os.listdir(checkpoints_dir)
@@ -57,7 +57,7 @@ def generate(args: argparse.Namespace) -> None:
             if "prefix_path" in params:
                 builder = MoleculeBuilder()
                 prefix_x, prefix_pos, _ = builder.load_tensor_from_file(
-                    params["prefix_path"]
+                    os.path.join(ROOT, params["prefix_path"])
                 )
                 prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
                 x, pos, batch = model.generate(
@@ -76,7 +76,7 @@ def generate(args: argparse.Namespace) -> None:
                     time_step_spacing=params["time_step_spacing"],
                 )
 
-        out_dir = os.path.join(params["output_path"], f"seed_{seed}")
+        out_dir = os.path.join(ROOT, params["output_path"], f"seed_{seed}")
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         torch.save(x, os.path.join(out_dir, "x.pt"))

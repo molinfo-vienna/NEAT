@@ -1,9 +1,9 @@
-checkpoints_path: /home/rjacob/MolGen/logs/MolGen/version_98
-output_path: /home/rjacob/MolGen/data/generated_98
-data_set: QM9
-num_molecules: 10000
-max_atoms: 100
+checkpoints_path: logs/NEAT/version_26
+output_path: data/generated_26
+data_set: GEOM
+num_molecules: 1000
+max_atoms: 200
 num_time_steps: 60
-num_runs: 1
+num_runs: 3
 time_step_spacing: linear
-# prefix_path: /home/rjacob/MolGen/data/prefixes/triazole
+# prefix_path: data/prefixes/triazole

@@ -93,7 +93,7 @@ if __name__ == "__main__":
     reference_smiles = datamodule.training_data.smiles
 
     # Evaluate generated molecules across all available seeds
-    data_path = Path(params["data_path"])
+    data_path = Path(os.path.join(ROOT, params["data_path"]))
     for subdir in data_path.iterdir():
         if subdir.is_dir() and subdir.name.startswith("seed"):
             subdata_path = os.path.join(data_path, subdir.name)
