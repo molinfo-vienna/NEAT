@@ -193,7 +193,9 @@ class QM9DataSet(InMemoryDataset):
 
     def process(self):
         # Load vocabulary
-        vocab_path = "/data/sharedXL/projects/Daniel/MolGen/scripts/qm9_vocab.yaml"
+        vocab_path = os.path.join(
+            os.path.dirname(os.path.dirname(self.root)), "scripts", "qm9_vocab.yaml"
+        )
         try:
             with open(vocab_path, "r") as file:
                 self.vocabulary = yaml.safe_load(file)
@@ -206,9 +208,7 @@ class QM9DataSet(InMemoryDataset):
         data_list = []
 
         # Parse all .xyz files
-        for root, _, files in os.walk(
-            "/data/sharedXL/projects/Daniel/MolGen/data/QM9/raw/xyz_files"
-        ):
+        for root, _, files in os.walk(os.path.join(self.root, "raw", "xyz_files")):
             for file in tqdm(files):
                 if file.lower().endswith(".xyz"):
                     path = os.path.join(root, file)

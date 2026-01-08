@@ -8,7 +8,7 @@ from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
 
 from .augmentation import RandomRotationAugmentation
-from .dataset import QM9DataSet
+from .dataset_qm9 import QM9DataSet
 from .dataset_geom import GEOMDataSet
 from .splitting import SourceTargetSplitter
 
@@ -30,12 +30,6 @@ def batch_transform(batch, source_target_split, noise_std):
         target_ptr,
     ) = splitter.create_source_target_split(batch)
 
-    # batch.x_source = x_source
-    # batch.pos_source = pos_source
-    # batch.batch_source = batch_source
-    # batch.x_target = x_target
-    # batch.pos_target = pos_target
-    # batch.batch_target = batch_target
     batch.stop_tokens = stop_tokens
     batch.source_ptr = source_ptr
     batch.target_ptr = target_ptr

@@ -35,9 +35,8 @@ def training(args: argparse.Namespace) -> None:
         Loader=yaml.FullLoader,
     )
 
-    DATA_ROOT = os.path.join(ROOT, "data")
     datamodule = DataModule(
-        DATA_ROOT,
+        os.path.join(ROOT, "data"),
         params["data_set"],
         batch_size=params["batch_size"],
         source_target_split=params["source_target_split"],
@@ -52,29 +51,6 @@ def training(args: argparse.Namespace) -> None:
 
     # Initialize a new model instance...
     model = MODEL(**params)
-
-    # ... OR load and fine-tune model
-    # MODEL_NUMBER = 85
-    # MODEL_PATH = f"{ROOT}/logs/{MODEL.__name__}/version_{MODEL_NUMBER}/"
-    # checkpoints_dir = os.path.join(MODEL_PATH, "checkpoints")
-    # pt_files = [
-    #     f
-    #     for f in os.listdir(checkpoints_dir)
-    #     if f.endswith(".ckpt") and f.startswith("best-val-validity")
-    # ]
-    # if not pt_files:
-    #     raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")
-
-    # CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
-    # print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
-    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
-
-    # CAREFUL:
-    # The trainer.fit() method needs to be called with the right arguments,
-    # depending on whether we are initializing a new model or loading one.
-
-    # ----------------------------------------------------------
 
     tb_logger = TensorBoardLogger(
         os.path.join(ROOT, "logs"),
@@ -122,7 +98,6 @@ def training(args: argparse.Namespace) -> None:
     )
 
     trainer.fit(model=model, datamodule=datamodule)  # For new model training
-    # trainer.fit(model=model, datamodule=datamodule, ckpt_path=CHECKPOINTS_PATH)  # For fine-tuning
 
 
 def parseArgs() -> argparse.Namespace:

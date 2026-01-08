@@ -7,6 +7,7 @@ https://arxiv.org/pdf/2403.03206.pdf
 
 import math
 import types
+from tqdm import tqdm
 
 import torch
 import torch.nn as nn
@@ -797,95 +798,105 @@ class NEAT(LightningModule):
         active_mol_idx = torch.arange(batch_size, device=device)[~stop_token_mask]
 
         # (6) Iterate over the maximum number of atoms to generate
-        for i in range(max_atoms):
-            # (6.1) Compute source set representation
-            expanded_mask = torch.isin(batch_source, active_mol_idx)
-            masked_x = x[expanded_mask]
-            masked_pos = pos[expanded_mask]
-            masked_batch_source = batch_source[expanded_mask]
-            _, batch_source_remapped = torch.unique(
-                masked_batch_source.clone(), return_inverse=True
-            )
-            source_set_representation = self.compute_source_set_representation(
-                masked_x, masked_pos, batch_source_remapped, device
-            )  # [active_mol_count, n_embd]
+        with tqdm(range(max_atoms)) as pbar:
+            for i in pbar:
+                # (6.1) Compute source set representation
+                expanded_mask = torch.isin(batch_source, active_mol_idx)
+                masked_x = x[expanded_mask]
+                masked_pos = pos[expanded_mask]
+                masked_batch_source = batch_source[expanded_mask]
+                _, batch_source_remapped = torch.unique(
+                    masked_batch_source.clone(), return_inverse=True
+                )
+                source_set_representation = self.compute_source_set_representation(
+                    masked_x, masked_pos, batch_source_remapped, device
+                )  # [active_mol_count, n_embd]
 
-            # (6.2) Compute logits
-            logits = self.atom_type_prediction_head(
-                source_set_representation
-            )  # [active_mol_count, vocab_size]
+                # (6.2) Compute logits
+                logits = self.atom_type_prediction_head(
+                    source_set_representation
+                )  # [active_mol_count, vocab_size]
 
-            # (6.3) Compute probabilities
-            probabilities = F.softmax(logits, dim=-1)  # [active_mol_count, vocab_size]
+                # (6.3) Compute probabilities
+                probabilities = F.softmax(
+                    logits, dim=-1
+                )  # [active_mol_count, vocab_size]
 
-            # (6.4) Sample next atom types from the resulting distribution
-            x_next = torch.argmax(probabilities, dim=1)
+                # (6.4) Sample next atom types from the resulting distribution
+                x_next = torch.argmax(probabilities, dim=1)
 
-            # (6.5) Create a mask on the active molecules given the newly predicted atom types
-            x_next_mask = x_next == 0  # [active_mol_count]
+                # (6.5) Create a mask on the active molecules given the newly predicted atom types
+                x_next_mask = x_next == 0  # [active_mol_count]
 
-            print(f"Generating atom {i + 2} for {(~x_next_mask).sum()} molecules.")
+                pbar.set_postfix_str(
+                    f"Generating atom {i + 2} for {(~x_next_mask).sum()} molecules."
+                )
+                pbar.refresh()
 
-            # (6.6) Update the stop token mask with the newly predicted stop tokens
-            stop_token_mask[active_mol_idx] += x_next_mask  # [batch_size]
+                # (6.6) Update the stop token mask with the newly predicted stop tokens
+                stop_token_mask[active_mol_idx] += x_next_mask  # [batch_size]
 
-            # (6.7) Count the number of stop tokens and break if all molecules
-            # have a stop token also update the active molecule indices and count
-            n_stop_tokens = stop_token_mask.sum()
-            active_mol_idx = torch.arange(batch_size, device=device)[
-                ~stop_token_mask
-            ]  # [active_mol_count] carefull, this might be shorter than before, if stop tokens were predicted!
-            if n_stop_tokens == batch_size:
-                break
+                # (6.7) Count the number of stop tokens and break if all molecules
+                # have a stop token also update the active molecule indices and count
+                n_stop_tokens = stop_token_mask.sum()
+                active_mol_idx = torch.arange(batch_size, device=device)[
+                    ~stop_token_mask
+                ]  # [active_mol_count] carefull, this might be shorter than before, if stop tokens were predicted!
+                if n_stop_tokens == batch_size:
+                    break
 
-            # (6.8) Select only the source set representations for the active molecules
-            x_next = x_next[~x_next_mask]
-            source_set_representation = source_set_representation[~x_next_mask]
-            # (6.9) Calculate the positions of the newly predicted atoms with flow matching
-            pos_next = self.calculate_positions(
-                x_next,
-                source_set_representation,
-                num_time_steps,
-                device,
-                time_step_spacing,
-            )
+                # (6.8) Select only the source set representations for the active molecules
+                x_next = x_next[~x_next_mask]
+                source_set_representation = source_set_representation[~x_next_mask]
+                # (6.9) Calculate the positions of the newly predicted atoms with flow matching
+                pos_next = self.calculate_positions(
+                    x_next,
+                    source_set_representation,
+                    num_time_steps,
+                    device,
+                    time_step_spacing,
+                )
 
-            # (6.10) Update the x, pos, and batch source tensors
-            updated_x = []
-            updated_pos = []
-            updated_batch = []
-            for idx in range(batch_size):
-                if idx in active_mol_idx:
-                    active_idx = torch.where(active_mol_idx == idx)[0]
-                    updated_x.append(
-                        torch.cat(
-                            (x[batch_source == idx], x_next[active_idx].view(1)), dim=0
-                        )
-                    )  # [num_atoms+1]
-                    updated_pos.append(
-                        torch.cat(
-                            (pos[batch_source == idx], pos_next[active_idx].view(1, 3)),
-                            dim=0,
-                        )
-                    )  # [num_atoms+1, 3]
-                    updated_batch.append(
-                        torch.cat(
-                            (
-                                batch_source[batch_source == idx],
-                                torch.tensor(idx, device=device).view(1),
-                            ),
-                            dim=0,
-                        )
-                    )  # [num_atoms+1]
-                else:
-                    updated_x.append(x[batch_source == idx])
-                    updated_pos.append(pos[batch_source == idx])
-                    updated_batch.append(batch_source[batch_source == idx])
+                # (6.10) Update the x, pos, and batch source tensors
+                updated_x = []
+                updated_pos = []
+                updated_batch = []
+                for idx in range(batch_size):
+                    if idx in active_mol_idx:
+                        active_idx = torch.where(active_mol_idx == idx)[0]
+                        updated_x.append(
+                            torch.cat(
+                                (x[batch_source == idx], x_next[active_idx].view(1)),
+                                dim=0,
+                            )
+                        )  # [num_atoms+1]
+                        updated_pos.append(
+                            torch.cat(
+                                (
+                                    pos[batch_source == idx],
+                                    pos_next[active_idx].view(1, 3),
+                                ),
+                                dim=0,
+                            )
+                        )  # [num_atoms+1, 3]
+                        updated_batch.append(
+                            torch.cat(
+                                (
+                                    batch_source[batch_source == idx],
+                                    torch.tensor(idx, device=device).view(1),
+                                ),
+                                dim=0,
+                            )
+                        )  # [num_atoms+1]
+                    else:
+                        updated_x.append(x[batch_source == idx])
+                        updated_pos.append(pos[batch_source == idx])
+                        updated_batch.append(batch_source[batch_source == idx])
 
-            x = torch.cat(updated_x, dim=0)  # [batch_size]
-            pos = torch.cat(updated_pos, dim=0)  # [batch_size, 3]
-            pos -= pos.mean(dim=0, keepdim=True)
-            batch_source = torch.cat(updated_batch, dim=0)  # [batch_size]
+                x = torch.cat(updated_x, dim=0)  # [batch_size]
+                pos = torch.cat(updated_pos, dim=0)  # [batch_size, 3]
+                pos -= pos.mean(dim=0, keepdim=True)
+                batch_source = torch.cat(updated_batch, dim=0)  # [batch_size]
 
         return x, pos, batch_source
 
