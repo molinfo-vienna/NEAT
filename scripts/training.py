@@ -39,7 +39,6 @@ def training(args: argparse.Namespace) -> None:
         os.path.join(ROOT, "data"),
         params["data_set"],
         batch_size=params["batch_size"],
-        source_target_split=params["source_target_split"],
         noise_std=params["noise_std"],
         num_workers=8,
     )

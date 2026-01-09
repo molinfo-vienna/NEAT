@@ -14,26 +14,28 @@ from .splitting import SourceTargetSplitter
 
 
 def batch_transform(batch, source_target_split, noise_std):
+    # (1) Apply random rotation augmentation
     rotation_augmentation = RandomRotationAugmentation()
     batch.pos = rotation_augmentation.rotate_graphs_randomly(batch.pos, batch.batch)
+
+    # (2) Create source-target split
     splitter = SourceTargetSplitter(splitting_mode=source_target_split)
 
-    (
-        x_source,  # [n_source_atoms]
-        pos_source,  # [n_source_atoms, 3]
-        batch_source,  # [n_source_atoms]
-        x_target,  # [n_target_atoms]
-        pos_target,  # [n_target_atoms, 3]
-        batch_target,  # [n_target_atoms]
-        stop_tokens,  # [n_molecules]
-        source_ptr,
-        target_ptr,
-    ) = splitter.create_source_target_split(batch)
-
-    batch.stop_tokens = stop_tokens
+    source_ptr, target_ptr = splitter.create_source_target_split(batch)
     batch.source_ptr = source_ptr
     batch.target_ptr = target_ptr
 
+    # (3) Determine source sets with empty target sets, these have stop tokens
+    target_set_mask = torch.zeros_like(
+        batch.batch, device=batch.batch.device, dtype=torch.bool
+    )
+    target_set_mask[target_ptr] = 1
+    batch_target = batch.batch[target_set_mask]
+    stop_tokens = ~(torch.isin(torch.arange(0, len(batch)), torch.unique(batch_target)))
+    batch.stop_tokens = stop_tokens
+
+    # (4) Couple positions in the target set with random positions via linear sum assignment
+    pos_target = batch.pos[target_set_mask]
     batch_target = batch_target.long()
     pos_random = noise_std * torch.randn_like(pos_target)
     target_idx = torch.unique(batch_target)
@@ -74,7 +76,7 @@ class DataModule(LightningDataModule):
         data_dir: str,
         data_set: str = "QM9",
         batch_size: int = 32,
-        source_target_split: str = "cyclic",
+        source_target_split: str = "neighborhood",
         noise_std: float = 1.4,
         num_workers: int = 1,
     ) -> None:
@@ -87,8 +89,10 @@ class DataModule(LightningDataModule):
         self.num_workers = num_workers
         if self.data_set == "QM9":
             self.vocab_size = len(QM9DataSet.VOCABULARY) + 1
+            self.vocab = QM9DataSet.VOCABULARY
         elif self.data_set == "GEOM":
             self.vocab_size = len(GEOMDataSet.VOCABULARY) + 1
+            self.vocab = GEOMDataSet.VOCABULARY
         else:
             raise ValueError(f"Unknown data_set: {self.data_set}")
 

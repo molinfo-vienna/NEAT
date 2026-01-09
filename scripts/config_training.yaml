@@ -15,7 +15,6 @@ n_layer: 16
 n_layers_fm: 6
 noise_std: 1.4
 rope: false
-source_target_split: cyclic
 time_step_resampling: 16
 time_step_sampling: logit_normal
 weight_decay: 1.0e-06
