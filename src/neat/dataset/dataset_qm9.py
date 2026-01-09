@@ -37,6 +37,14 @@ class QM9DataSet(InMemoryDataset):
             dataset. (default: :obj:`None`)
     """
 
+    VOCABULARY = {
+        1: 1,
+        6: 2,
+        7: 3,
+        8: 4,
+        9: 5,
+    }
+
     def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
         super().__init__(root, transform, pre_transform, pre_filter)
         self.root = root
@@ -192,16 +200,6 @@ class QM9DataSet(InMemoryDataset):
         return (mol_id, mol)
 
     def process(self):
-        # Load vocabulary
-        vocab_path = os.path.join(
-            os.path.dirname(os.path.dirname(self.root)), "scripts", "qm9_vocab.yaml"
-        )
-        try:
-            with open(vocab_path, "r") as file:
-                self.vocabulary = yaml.safe_load(file)
-        except yaml.YAMLError as e:
-            logging.error(f"Error loading vocabulary YAML file: {e}")
-
         # Load uncharacterized IDs to exclude (3054 molecules)
         exclude_set = self.parse_uncharacterized_ids(self.raw_paths[1])
 
@@ -241,7 +239,7 @@ class QM9DataSet(InMemoryDataset):
 
             # Atomic number OHE
             x = torch.tensor(
-                [self.vocabulary[atom.GetAtomicNum()] for atom in mol.GetAtoms()],
+                [self.VOCABULARY[atom.GetAtomicNum()] for atom in mol.GetAtoms()],
                 dtype=torch.long,
             )
 

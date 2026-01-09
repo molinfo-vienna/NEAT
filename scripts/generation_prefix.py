@@ -10,7 +10,7 @@ import torch_geometric
 import yaml
 
 from neat.model import NEAT
-from neat.dataset import DataModule
+from neat.dataset import DataModule, GEOMDataSet
 from neat.utils.edm_metrics import edm_metrics
 
 torch.set_float32_matmul_precision("medium")
@@ -96,10 +96,7 @@ def generate(args: argparse.Namespace) -> None:
 
     # Load prefix molecules from file
     prefix_path = os.path.join(os.getcwd(), "data", "GEOM", "prefixes.sdf")
-    vocab_path = os.path.join(ROOT, "scripts", "geom_vocab.yaml")
-    with open(vocab_path, "r") as file:
-        vocab = yaml.safe_load(file)
-
+    vocab = GEOMDataSet.VOCABULARY
     mols, dummy_idxs = read_sdf_dummy_indices_csv(prefix_path, vocab)
 
     CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
