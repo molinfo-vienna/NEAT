@@ -15,11 +15,11 @@ class MoleculeBuilder:
         super().__init__()
         if vocab == "QM9":
             self.atom_type_to_element = {
-                1: "H",  # Hydrogen
-                2: "C",  # Carbon
-                3: "N",  # Nitrogen
-                4: "O",  # Oxygen
-                5: "F",  # Fluorine
+                1: "H",
+                2: "C",
+                3: "N",
+                4: "O",
+                5: "F",
             }
         elif vocab == "GEOM":
             self.atom_type_to_element = {

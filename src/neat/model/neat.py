@@ -1,23 +1,19 @@
 """
 Taken and modified from the nanoGPT repository:
 https://github.com/karpathy/nanoGPT/blob/master/model.py
-With contributions from:
-https://arxiv.org/pdf/2403.03206.pdf
 """
 
 import math
-import types
 from tqdm import tqdm
 
 import torch
 import torch.nn as nn
 from lightning import LightningModule
-from scipy.optimize import linear_sum_assignment
 from torch import Tensor
 from torch.nn import functional as F
 from torch.optim import Optimizer
 from torch_geometric.data import Data
-from torch_geometric.nn.pool import global_add_pool, global_mean_pool
+from torch_geometric.nn.pool import global_mean_pool
 
 from .attention import Block
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
@@ -243,12 +239,7 @@ class NEAT(LightningModule):
         # (8) Apply the output layer normalization
         x = self.layer_norm_after_transformer(x)  # [batch_size, max_atom_count, n_embd]
 
-        # During the forward pass through the trandformer layers, the zero-paddings
-        # get filled with non-zero values. This should not be a problem, since these
-        # are masked out in the attention mechanism, but before pooling the atom
-        # embeddings into a molecule embedding, we re-apply the atom mask.
-        # TODO: Investigate where this behavior comes from, maybe it influences batch statistics of the MLP and LayerNorms?
-        # (9) Apply the atom mask to the input embedding
+        # (9) Apply the atom mask to the input embedding (not really needed, could be removed)
         x = x * atom_mask.unsqueeze(-1)  # [batch_size, max_atom_count, n_embd]
 
         # (10) Pool the atom embeddings into a molecule embedding
@@ -293,7 +284,6 @@ class NEAT(LightningModule):
             batch_target.clone(), return_inverse=True
         )  # [n_target_atoms]
         # (2) Take the mean over the one-hot encodings of the target atom types
-        # TODO: Using all atom types in not necessary. However, it could be interesting to differentiate atoms with different valences.
         x_target_prob = F.one_hot(
             x_target.long(), self.hparams.vocab_size
         ).float()  # [n_target_atoms, vocab_size]
@@ -403,33 +393,6 @@ class NEAT(LightningModule):
 
         # (9) Return the mean loss over all paths and time steps.
         return loss_fm.mean()  # [1]
-
-    def global_argmin_pool(self, x: Tensor, batch: Tensor) -> Tensor:
-        """
-        Performs a global pooling operation to find the indices of the minimum values
-        for each group in the batch.
-
-        Args:
-            x (Tensor): The input tensor of shape `(n_atoms,)` (e.g., float values).
-            batch (Tensor): A tensor of shape `(n_atoms,)` that maps each atom to a molecule.
-
-        Returns:
-            Tensor: Indices of the minimum values for each molecule.
-        """
-        # Get the number of unique molecules
-        n_molecules = batch.max().item() + 1
-
-        # Create a large tensor to store the values for each molecule
-        max_value = x.max() + 1
-        expanded_x = torch.full((n_molecules, x.size(0)), max_value, device=x.device)
-
-        # Scatter the values of x into the expanded tensor
-        expanded_x[batch, torch.arange(x.size(0))] = x
-
-        # Find the minimum values and their indices
-        _, min_indices = expanded_x.min(dim=1)
-
-        return min_indices
 
     def sample_timesteps_uniform(
         self, num_samples: int, device: torch.device
@@ -921,7 +884,7 @@ class NEAT(LightningModule):
                 )
                 pos_next = pos_next + delta_pos
         elif integration_method == "euler_maruyama":
-
+            # Following: https://github.com/apple/ml-simplefold/blob/0f44c59b1664e58acf2c72145b3f88c9c16dd6c4/src/simplefold/model/torch/sampler.py
             def diffusion_coefficient(t, epsilon=1e-3, w_cutoff=0.9):
                 # determine diffusion coefficient
                 w = (1.0 - t) / (t + epsilon)
@@ -941,7 +904,6 @@ class NEAT(LightningModule):
                     source_set_representation,
                     device=device,
                 )
-                # score = time_step * velocity - pos_next / (1 - time_step)
                 score = self.compute_score_from_velocity(velocity, pos_next, time_step)
                 diff_coeff = diffusion_coefficient(time_step)
                 drift = velocity + diff_coeff * score
@@ -951,7 +913,6 @@ class NEAT(LightningModule):
         return pos_next
 
     def compute_score_from_velocity(self, v_t, y_t, t):
-        # t = right_pad_dims_to(y_t, t)
         alpha_t, d_alpha_t = t, 1
         sigma_t, d_sigma_t = 1 - t, -1
         mean = y_t

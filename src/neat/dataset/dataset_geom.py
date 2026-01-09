@@ -5,7 +5,6 @@ import subprocess
 
 import networkx as nx
 import torch
-import yaml
 from rdkit import RDLogger
 from torch_geometric.data import Data, InMemoryDataset
 from tqdm import tqdm
@@ -14,95 +13,6 @@ from rdkit import Chem
 RDLogger.DisableLog("rdApp.*")
 
 SEED = 0
-
-
-def largest_fragment_by_size(mol, use_heavy_atoms=True, sanitize_frags=True):
-    """
-    Returns the largest fragment of `mol` by atom count.
-    - use_heavy_atoms: count non-hydrogen atoms if True, else all atoms.
-    - sanitize_frags: sanitize the fragment molecules (usually True).
-    """
-    frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=sanitize_frags)
-    if not frags:
-        return None
-    key = (
-        (lambda m: m.GetNumHeavyAtoms())
-        if use_heavy_atoms
-        else (lambda m: m.GetNumAtoms())
-    )
-    return max(frags, key=key)
-
-
-def process_molecule(smiles, conformers, vocabulary, num_conformers=5):
-    try:
-        conformer_list = []
-        for mol in conformers:
-            if len(conformer_list) >= num_conformers:
-                break
-
-            mol = largest_fragment_by_size(mol, use_heavy_atoms=True)
-
-            if mol is None:
-                logging.warning(
-                    f"RDKit molecule is None for {smiles}, skipping conformer."
-                )
-                continue
-
-            # Create a tensor for atomic numbers and hybridization states
-            x = torch.tensor(
-                [vocabulary[atom.GetAtomicNum()] for atom in mol.GetAtoms()],
-                dtype=torch.long,
-            )
-
-            # 3D coordinates centered at origin
-            conf = mol.GetConformer()
-            n = mol.GetNumAtoms()
-            pos = torch.zeros((n, 3), dtype=torch.float32)
-            for i in range(n):
-                p = conf.GetAtomPosition(i)  # returns RDKit Point3D
-                pos[i, 0] = p.x
-                pos[i, 1] = p.y
-                pos[i, 2] = p.z
-            pos = pos - pos.mean(dim=0, keepdim=True)
-
-            # Bond information for data augmentation during training
-            # Note that the generation does not use bond information
-            edge_index = []
-            for bond in mol.GetBonds():
-                i = bond.GetBeginAtomIdx()
-                j = bond.GetEndAtomIdx()
-                edge_index.append((i, j))
-                edge_index.append((j, i))
-
-            edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
-
-            # Initialize molecular graph
-            G = nx.Graph()
-            for i, j in edge_index.t().tolist():
-                G.add_edge(i, j)
-
-            # Compute eccentricities for all nodes
-            eccentricities = nx.eccentricity(G)
-            eccentricity_tensor = torch.tensor(
-                [eccentricities[node] for node in range(len(G.nodes))],
-                dtype=torch.long,
-            )
-
-            data = Data(
-                x=x,
-                pos=pos,
-                edge_index=edge_index,
-                eccentricity=eccentricity_tensor,
-                smiles=smiles,
-            )
-
-            conformer_list.append(data)
-
-        return conformer_list
-
-    except Exception as e:
-        print(f"Error processing {smiles}: {e}")
-        return None
 
 
 class GEOMDataSet(InMemoryDataset):
@@ -207,7 +117,7 @@ class GEOMDataSet(InMemoryDataset):
 
             data_list = []
             for smiles, conformers in tqdm(mol_list):
-                mol_data = process_molecule(
+                mol_data = self.process_molecule(
                     smiles,
                     conformers,
                     self.VOCABULARY,
@@ -225,3 +135,90 @@ class GEOMDataSet(InMemoryDataset):
                 data_list = [self.pre_transform(data) for data in data_list]
 
             self.save(data_list, self.processed_paths[i])
+
+    def largest_fragment_by_size(self, mol, use_heavy_atoms=True, sanitize_frags=True):
+        """
+        Returns the largest fragment of `mol` by atom count.
+        - use_heavy_atoms: count non-hydrogen atoms if True, else all atoms.
+        - sanitize_frags: sanitize the fragment molecules (usually True).
+        """
+        frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=sanitize_frags)
+        if not frags:
+            return None
+        key = (
+            (lambda m: m.GetNumHeavyAtoms())
+            if use_heavy_atoms
+            else (lambda m: m.GetNumAtoms())
+        )
+        return max(frags, key=key)
+
+    def process_molecule(self, smiles, conformers, vocabulary, num_conformers=5):
+        try:
+            conformer_list = []
+            for mol in conformers:
+                if len(conformer_list) >= num_conformers:
+                    break
+
+                mol = self.largest_fragment_by_size(mol, use_heavy_atoms=True)
+
+                if mol is None:
+                    logging.warning(
+                        f"RDKit molecule is None for {smiles}, skipping conformer."
+                    )
+                    continue
+
+                # Create a tensor for atomic numbers and hybridization states
+                x = torch.tensor(
+                    [vocabulary[atom.GetAtomicNum()] for atom in mol.GetAtoms()],
+                    dtype=torch.long,
+                )
+
+                # 3D coordinates centered at origin
+                conf = mol.GetConformer()
+                n = mol.GetNumAtoms()
+                pos = torch.zeros((n, 3), dtype=torch.float32)
+                for i in range(n):
+                    p = conf.GetAtomPosition(i)  # returns RDKit Point3D
+                    pos[i, 0] = p.x
+                    pos[i, 1] = p.y
+                    pos[i, 2] = p.z
+                pos = pos - pos.mean(dim=0, keepdim=True)
+
+                # Bond information for data augmentation during training
+                # Note that the generation does not use bond information
+                edge_index = []
+                for bond in mol.GetBonds():
+                    i = bond.GetBeginAtomIdx()
+                    j = bond.GetEndAtomIdx()
+                    edge_index.append((i, j))
+                    edge_index.append((j, i))
+
+                edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+
+                # Initialize molecular graph
+                G = nx.Graph()
+                for i, j in edge_index.t().tolist():
+                    G.add_edge(i, j)
+
+                # Compute eccentricities for all nodes
+                eccentricities = nx.eccentricity(G)
+                eccentricity_tensor = torch.tensor(
+                    [eccentricities[node] for node in range(len(G.nodes))],
+                    dtype=torch.long,
+                )
+
+                data = Data(
+                    x=x,
+                    pos=pos,
+                    edge_index=edge_index,
+                    eccentricity=eccentricity_tensor,
+                    smiles=smiles,
+                )
+
+                conformer_list.append(data)
+
+            return conformer_list
+
+        except Exception as e:
+            print(f"Error processing {smiles}: {e}")
+            return None
