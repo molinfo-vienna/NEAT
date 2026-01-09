@@ -21,14 +21,6 @@ class MoleculeBuilder:
                 4: "O",  # Oxygen
                 5: "F",  # Fluorine
             }
-        # Only for QUETZAL (different vocabulary)
-        # self.atom_type_to_element = {
-        #     1: "H",  # Hydrogen
-        #     6: "C",  # Carbon
-        #     7: "N",  # Nitrogen
-        #     8: "O",  # Oxygen
-        #     9: "F",  # Fluorine
-        # }
         elif vocab == "GEOM":
             self.atom_type_to_element = {
                 1: "H",
@@ -106,7 +98,7 @@ class MoleculeBuilder:
         """
         mols = []
         unique_batches = batch.unique().tolist()
-    
+
         iterator = unique_batches
         if progress_bar:
             iterator = tqdm(unique_batches, desc="Generating RDKit molecules")

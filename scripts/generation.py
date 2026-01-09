@@ -76,7 +76,7 @@ def generate(args: argparse.Namespace) -> None:
                     time_step_spacing=params["time_step_spacing"],
                 )
 
-        out_dir = os.path.join(ROOT, params["output_path"], f"seed_{seed}")
+        out_dir = os.path.join(ROOT, params["output_path"], "unconditional", f"seed_{seed}")
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         torch.save(x, os.path.join(out_dir, "x.pt"))

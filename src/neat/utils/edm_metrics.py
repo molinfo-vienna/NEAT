@@ -832,8 +832,6 @@ def edm_metrics(x, pos, batch, dataset):
     else:
         raise ValueError("Dataset not recognized: " + dataset)
 
-    mapping = dataset_info["mapping"]  # This is only for QUETZAL
-
     count_mol_stable = 0
     count_atm_stable = 0
     count_mol_total = batch.max().item() + 1
@@ -844,9 +842,6 @@ def edm_metrics(x, pos, batch, dataset):
     for i in tqdm(range(count_mol_total), desc="EDM metrics calculation"):
         positions = pos[batch == i]
         atom_type = x[batch == i] - 1
-        # Only for QUETZAL (different vocabulary)
-        # atom_type = torch.tensor([mapping[int(atom_type)] for atom_type in x[batch == i]])
-
         is_stable, nr_stable, total = check_stability(
             positions, atom_type, dataset_info
         )

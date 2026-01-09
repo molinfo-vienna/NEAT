@@ -11,7 +11,6 @@ import yaml
 
 from neat.model import NEAT
 from neat.dataset import DataModule, GEOMDataSet
-from neat.utils.edm_metrics import edm_metrics
 
 torch.set_float32_matmul_precision("medium")
 torch.backends.cudnn.deterministic = True
@@ -43,7 +42,7 @@ def mol_to_tensor(mol, vocabulary):
     return x, pos
 
 
-def read_sdf_dummy_indices_csv(sdf_path, vocab):
+def read_sdf_dummy_indices(sdf_path, vocab):
     suppl = Chem.SDMolSupplier(sdf_path, removeHs=False)
     mols, dummy_indices = [], []
     for mol in suppl:
@@ -57,13 +56,6 @@ def read_sdf_dummy_indices_csv(sdf_path, vocab):
             idxs = []
         dummy_indices.append(idxs)
     return mols, dummy_indices
-
-
-def compute_mean_and_95_ci(data):
-    mean = np.mean(data)
-    std_err = np.std(data) / np.sqrt(len(data))
-    margin_of_error = 1.96 * std_err
-    return mean, margin_of_error
 
 
 def generate(args: argparse.Namespace) -> None:
@@ -97,17 +89,13 @@ def generate(args: argparse.Namespace) -> None:
     # Load prefix molecules from file
     prefix_path = os.path.join(os.getcwd(), "data", "GEOM", "prefixes.sdf")
     vocab = GEOMDataSet.VOCABULARY
-    mols, dummy_idxs = read_sdf_dummy_indices_csv(prefix_path, vocab)
+    mols, dummy_idxs = read_sdf_dummy_indices(prefix_path, vocab)
 
     CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
     print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
 
     MODEL = NEAT
     model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
-
-    stability = []
-    validity = []
-    uniqueness = []
 
     for mol_index, ((x, pos), dummy_idx) in enumerate(zip(mols, dummy_idxs)):
         with torch.no_grad():
@@ -128,55 +116,14 @@ def generate(args: argparse.Namespace) -> None:
                 time_step_spacing=params["time_step_spacing"],
             )
 
-            (
-                atom_stability,
-                mol_stability,
-                edm_valid,
-                edm_unique,
-                edm_invalid_idxs,
-            ) = edm_metrics(x.cpu(), pos.cpu(), batch.cpu(), params["data_set"])
-
-            edm_unique = edm_unique * edm_valid
-            stability.append(atom_stability)
-            validity.append(edm_valid)
-            uniqueness.append(edm_unique)
-            print(
-                f"Prefix with {n_atoms} atoms: Atom stability: {atom_stability*100:.2f}%, Validity: {edm_valid*100:.2f}%, Uniqueness: {edm_unique*100:.2f}%"
-            )
-
             out_dir = os.path.join(
-                params["output_path"], "prefix_generation", f"prefix_{mol_index}"
+                params["output_path"], "prefix", f"prefix_{mol_index}"
             )
             if not os.path.exists(out_dir):
                 os.makedirs(out_dir)
             torch.save(x, os.path.join(out_dir, "x.pt"))
             torch.save(pos, os.path.join(out_dir, "pos.pt"))
             torch.save(batch, os.path.join(out_dir, "batch.pt"))
-            with open(os.path.join(out_dir, "evaluation_results.txt"), "w") as f:
-                f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
-                f.write(f"Molecule stability: {mol_stability*100:.2f}%\n")
-                f.write(f"Lookup valid: {edm_valid*100:.2f}%\n")
-                f.write(f"Lookup valid x unique: { edm_unique * 100:.2f}%\n")
-
-        atom_stability_mean, atom_stability_ci = compute_mean_and_95_ci(stability)
-        lookup_valid_mean, lookup_valid_ci = compute_mean_and_95_ci(validity)
-        lookup_valid_x_unique_mean, lookup_valid_x_unique_ci = compute_mean_and_95_ci(
-            uniqueness
-        )
-        out_dir = os.path.join(params["output_path"], "prefix_generation")
-        with open(os.path.join(out_dir, "evaluation_summary.txt"), "w") as f:
-            f.write(
-                f"Atom stability: {atom_stability_mean:.2f}% ± {atom_stability_ci:.2f}%\n"
-            )
-            f.write(
-                f"Lookup valid: {lookup_valid_mean:.2f}% ± {lookup_valid_ci:.2f}%\n"
-            )
-            f.write(
-                f"Lookup valid x unique: {lookup_valid_x_unique_mean:.2f}% ± {lookup_valid_x_unique_ci:.2f}%\n"
-            )
-        print(
-            f"Average Atom stability: {sum(stability)/len(stability)*100:.2f}%, Average Validity: {sum(validity)/len(validity)*100:.2f}%, Average Uniqueness: {sum(uniqueness)/len(uniqueness)*100:.2f}%"
-        )
 
 
 def parseArgs() -> argparse.Namespace:
