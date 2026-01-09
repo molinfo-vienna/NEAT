@@ -722,11 +722,7 @@ def check_stability(positions, atom_type, dataset_info, debug=False):
             dist = np.sqrt(np.sum((p1 - p2) ** 2))
             atom1, atom2 = atom_decoder[atom_type[i]], atom_decoder[atom_type[j]]
             pair = sorted([atom_type[i], atom_type[j]])
-            if (
-                dataset_info["name"] == "qm9"
-                or dataset_info["name"] == "qm9_second_half"
-                or dataset_info["name"] == "qm9_first_half"
-            ):
+            if dataset_info["name"] == "qm9":
                 order = get_bond_order(atom1, atom2, dist)
             elif dataset_info["name"] == "geom":
                 order = geom_predictor(
@@ -800,11 +796,7 @@ def build_xae_molecule(positions, atom_types, dataset_info, bond_orders=None):
                 order = bond_orders[i, j]
             else:
                 pair = sorted([atom_types[i], atom_types[j]])
-                if (
-                    dataset_info["name"] == "qm9"
-                    or dataset_info["name"] == "qm9_second_half"
-                    or dataset_info["name"] == "qm9_first_half"
-                ):
+                if dataset_info["name"] == "qm9":
                     order = get_bond_order(
                         atom_decoder[pair[0]], atom_decoder[pair[1]], dists[i, j]
                     )
