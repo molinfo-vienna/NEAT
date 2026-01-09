@@ -85,6 +85,12 @@ class DataModule(LightningDataModule):
         self.source_target_split = source_target_split
         self.noise_std = noise_std
         self.num_workers = num_workers
+        if self.data_set == "QM9":
+            self.vocab_size = len(QM9DataSet.VOCABULARY) + 1
+        elif self.data_set == "GEOM":
+            self.vocab_size = len(GEOMDataSet.VOCABULARY) + 1
+        else:
+            raise ValueError(f"Unknown data_set: {self.data_set}")
 
         self.source_target_split_fn = functools.partial(
             custom_collate_fn,
