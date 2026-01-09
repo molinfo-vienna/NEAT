@@ -1,5 +1,7 @@
 """
-Taken as is from the QUETZAL repository:
+Taken from
+https://github.com/LTH14/mar/blob/fe470ac24afbee924668d8c5c83e9fec60af3a73/models/diffloss.py
+with modifications following
 https://github.com/aspuru-guzik-group/quetzal/blob/main/simple_mlp.py
 """
 
@@ -7,20 +9,6 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
-
-
-# https://github.com/facebookresearch/dinov2/blob/e1277af2ba9496fbadf7aec6eba56e8d882d1e35/dinov2/layers/swiglu_ffn.py
-class SwiGLUFFN(nn.Module):
-    def __init__(self, channels, bias):
-        super().__init__()
-        self.w12 = nn.Linear(channels, 2 * channels * 2, bias=bias)
-        self.w3 = nn.Linear(2 * channels, channels, bias=bias)
-
-    def forward(self, x):
-        x12 = self.w12(x)
-        x1, x2 = x12.chunk(2, dim=-1)
-        hidden = F.silu(x1) * x2
-        return self.w3(hidden)
 
 
 def modulate(x, shift, scale):
@@ -61,20 +49,17 @@ class ResBlock(nn.Module):
     :param channels: the number of input channels.
     """
 
-    def __init__(self, channels, mlp_type="mlp", expand=4):
+    def __init__(self, channels):
         super().__init__()
         self.channels = channels
 
         self.in_ln = nn.LayerNorm(channels, eps=1e-6)
 
-        if mlp_type == "mlp":
-            self.mlp = nn.Sequential(
-                nn.Linear(channels, expand * channels, bias=True),
-                nn.SiLU(),
-                nn.Linear(expand * channels, channels, bias=True),
-            )
-        elif mlp_type == "swiglu":  # expand=2
-            self.mlp = SwiGLUFFN(channels, bias=True)
+        self.mlp = nn.Sequential(
+            nn.Linear(channels, channels, bias=True),
+            nn.SiLU(),
+            nn.Linear(channels, channels, bias=True),
+        )
 
         self.adaLN_modulation = nn.Sequential(
             nn.SiLU(), nn.Linear(channels, 3 * channels, bias=True)
@@ -116,39 +101,41 @@ class SimpleMLPAdaLN(nn.Module):
 
     def __init__(
         self,
-        config,
-        channels=3,
+        model_channels,
+        condition_channels,
+        fourier_features_channels=512,
+        fourier_features_bandwidth=20.0,
+        n_layer_mlp=6,
+        coordinate_channels=3,
     ):
         super().__init__()
 
-        self.time_embed = MPFourier(config.diff_w)
-        self.cond_embed = nn.Linear(config.n_embd, config.diff_w)
+        self.time_embed = MPFourier(model_channels)
+        self.cond_embed = nn.Linear(condition_channels, model_channels)
 
-        self.input_proj = nn.Linear(channels, config.diff_w)
-        if config.diff_fourier > 0:
+        self.input_proj = nn.Linear(coordinate_channels, model_channels)
+        if fourier_features_channels > 0:
             self.embed_fourier = FourierCoords(
                 in_features=3,
-                num_channels=config.diff_fourier,
-                out_features=config.diff_w,
-                bandwidth=config.coord_bandwidth,
+                num_channels=fourier_features_channels,
+                out_features=model_channels,
+                bandwidth=fourier_features_bandwidth,
             )
         else:
             self.embed_fourier = lambda x: torch.zeros(
-                *x.shape[:-1], config.diff_w, device=x.device, dtype=x.dtype
+                *x.shape[:-1], model_channels, device=x.device, dtype=x.dtype
             )
 
         res_blocks = []
-        for i in range(config.diff_d):
+        for _ in range(n_layer_mlp):
             res_blocks.append(
                 ResBlock(
-                    config.diff_w,
-                    mlp_type=config.diff_mlp,
-                    expand=config.diff_mlp_expand,
+                    model_channels,
                 )
             )
 
         self.res_blocks = nn.ModuleList(res_blocks)
-        self.final_layer = FinalLayer(config.diff_w, channels)
+        self.final_layer = FinalLayer(model_channels, coordinate_channels)
 
         self.initialize_weights()
 

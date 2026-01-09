@@ -89,17 +89,13 @@ class NEAT(LightningModule):
 
         # This is the Diffusion MLP with AdaLN conditioning.s
         # It was used in the original diffusion loss paper, and QUETZAL also uses it.
-        config = types.SimpleNamespace(
-            diff_w=self.hparams.n_embd_fm,  # model hidden width
-            n_embd=self.hparams.n_embd,  # dimension of conditioning vector c
-            diff_fourier=512,  # number of Fourier channels for coord embedding
-            coord_bandwidth=20.0,  # frequency bandwidth for Fourier features
-            diff_d=self.hparams.n_layers_fm,  # number of residual blocks
-            diff_mlp="mlp",  # use MLP feedforward
-            diff_mlp_expand=1,  # expansion factor for MLP
+        self.ada_mlp = SimpleMLPAdaLN(
+            model_channels=self.hparams.n_embd_fm,  # model hidden width
+            condition_channels=self.hparams.n_embd,  # dimension of conditioning vector c
+            fourier_features_channels=512,  # number of Fourier channels for coord embedding
+            fourier_features_bandwidth=20.0,  # frequency bandwidth for Fourier features
+            n_layer_mlp=self.hparams.n_layers_fm,  # number of residual blocks)
         )
-        self.ada_mlp = SimpleMLPAdaLN(config)
-
         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
 
     def _init_weights(self, module: nn.Module) -> None:
@@ -355,55 +351,14 @@ class NEAT(LightningModule):
         pos_random = pos_random.to(device)
         batch_target = batch_target.long()
 
-        # # (1) We sample a random position for each non_empty target set
-        # #     with optimal transport correction.
-
-        # # (1.1) Compute path indices. Atoms of the same type in the same molecule have the same index.
-        # _, idx = torch.unique(
-        #     batch_target * 100 + x_target, return_inverse=True
-        # )  # [n_paths]
-        # # (1.2) Compute number of paths. Number of paths is the sum of unique atom types over all molecules.
-        # n_paths = idx.max() + 1  # [1]
-        # # (1.3) Sample random positions for each path.
-        # pos_random = self.hparams.noise_std * torch.randn(
-        #     n_paths, 3, device=device
-        # )  # [n_paths, 3]
-        # # (1.4) Expand the random positions to the number of atoms in the target sets.
-        # #       This is done by indexing the random positions with the path indices.
-        # #       It is necessary to find which atom of the correct type in the target set
-        # #       is closest to the randomly sampled positions (optimal transport).
-        # pos_random_expanded = pos_random[idx]  # [n_target_atoms, 3]
-        # # (1.5) Compute the distance between the target positions and the randomly sampled positions.
-        # distance = torch.norm(
-        #     pos_target - pos_random_expanded, dim=1
-        # )  # [n_target_atoms]
-        # # (1.6) Find the indices of the minimum distances.
-        # #       This returns a tensor of length n_paths pointing to the atom
-        # #       in the target set that is closest to the randomly sampled position.
-        # #       This returns an index tensor.
-        # min_indices = self.global_argmin_pool(distance, idx)  # [n_paths]
-        # # (1.7) Compute the reweighting factor. This is the number of atoms of the same type in the target set.
-        # reweighting = global_add_pool(torch.ones_like(distance), idx)  # [n_paths]
-        # # (1.8) Select the closest target positions given the minimum distance indices.
-        # pos_target = pos_target[min_indices]  # [n_paths, 3]
-
         n_paths = pos_target.shape[0]
-        # batch_target = batch_target.long()
-        # pos_random = self.hparams.noise_std * torch.randn_like(pos_target)
-        # target_idx = torch.unique(batch_target)
-        # for idx in target_idx:
-        #     cost_matrix = torch.cdist(
-        #         pos_target[batch_target == idx], pos_random[batch_target == idx], p=2
-        #     )
-        #     _, prior_idx = linear_sum_assignment(cost_matrix.cpu())
 
-        #     # reorder prior to according to optimal assignment
-        #     pos_random[batch_target == idx] = pos_random[batch_target == idx][prior_idx]
+        # Note: Coupling via linear sum assignment is done in the DataLoader
 
-        # (2) Interpolation: t = 0 --> pos_random, t=1 --> target_pos
+        # (1) Interpolation: t = 0 --> pos_random, t=1 --> target_pos
         interpolation = pos_target - pos_random  # [n_paths, 3]
 
-        # (3) For each path, draw k random time steps
+        # (2) For each path, draw k random time steps
         resampling = self.hparams.time_step_resampling
         if self.hparams.time_step_sampling == "uniform":
             time_step = self.sample_timesteps_uniform(
@@ -416,25 +371,22 @@ class NEAT(LightningModule):
                 n_paths * resampling, device=device
             )  # [n_paths * k]
 
-        # (4) Since we sample k time steps per path, we need to expand all other tensors accordingly
-        # x_target = x_target[min_indices]
+        # (3) Since we sample k time steps per path, we need to expand all other tensors accordingly
         x_target = torch.cat([x_target for _ in range(resampling)], dim=0)
         pos_random = torch.cat([pos_random for _ in range(resampling)], dim=0)
         pos_target = torch.cat([pos_target for _ in range(resampling)], dim=0)
         interpolation = torch.cat([interpolation for _ in range(resampling)], dim=0)
         source_set_representations = source_set_representation[batch_target]
-        # source_set_representations = source_set_representations[min_indices]
         source_set_representations = torch.cat(
             [source_set_representations for _ in range(resampling)], dim=0
         )
-        # reweighting = torch.cat([reweighting for _ in range(resampling)], dim=0)
 
-        # (5) Calculate k interpolated positions per path given the sampled time steps
+        # (4) Calculate k interpolated positions per path given the sampled time steps
         interpolated_pos = pos_random + interpolation * time_step.unsqueeze(
             1
         )  # [n_paths * k, 3]
 
-        # (6) Compute the vector field output of the flow network at the
+        # (5) Compute the vector field output of the flow network at the
         # interpolated positions and time steps.
         output_fm = self.compute_vector_field(
             x_target,
@@ -448,9 +400,6 @@ class NEAT(LightningModule):
         # This is the MSE between the predicted vector field and
         # the interpolation (pos_1 - pos_0) for each path.
         loss_fm = torch.mean((output_fm - interpolation) ** 2, dim=1)  # [n_paths * k]
-
-        # (8) Reweight the loss by the number of atoms of the same type in the target set.
-        # loss_fm = loss_fm * reweighting  # [n_paths * k]
 
         # (9) Return the mean loss over all paths and time steps.
         return loss_fm.mean()  # [1]
