@@ -46,6 +46,7 @@ def training(args: argparse.Namespace) -> None:
     datamodule.setup()
 
     accumulate_grad_batches = params.pop("accumulate_grad_batches")
+    params["vocab_size"] = datamodule.vocab_size
 
     # ------- Model initialization -----------------------------
 

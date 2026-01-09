@@ -56,7 +56,6 @@ def compute_mean_and_95_ci(data):
 
 def parseArgs() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-
     parser.add_argument(
         "--config",
         dest="config_file",
@@ -64,14 +63,11 @@ def parseArgs() -> argparse.Namespace:
         metavar="<file>",
         help="Config file for evaluation.",
     )
-
     return parser.parse_args()
 
 
 if __name__ == "__main__":
-
     args = parseArgs()
-
     ROOT = os.getcwd()
 
     # Load config file
@@ -92,10 +88,19 @@ if __name__ == "__main__":
     datamodule.setup()
     reference_smiles = datamodule.training_data.smiles
 
-    # Evaluate generated molecules across all available seeds
+    # Evaluate generated molecules across all available seeds or prefixes
+    atom_stability_lst = []
+    molecule_stability_lst = []
+    lookup_valid_lst = []
+    lookup_valid_x_unique_lst = []
+    xyz2mol_valid_lst = []
+    xyz2mol_valid_x_unique_lst = []
+    xyz2mol_valid_x_unique_x_novel_lst = []
     data_path = Path(os.path.join(ROOT, params["data_path"]))
     for subdir in data_path.iterdir():
-        if subdir.is_dir() and subdir.name.startswith("seed"):
+        if subdir.is_dir() and (
+            subdir.name.startswith("seed") or subdir.name.startswith("prefix")
+        ):
             subdata_path = os.path.join(data_path, subdir.name)
             builder = MoleculeBuilder(vocab=params["data_set"])
             x, pos, batch = builder.load_tensor_from_file(subdata_path)
@@ -107,20 +112,26 @@ if __name__ == "__main__":
                 edm_unique,
                 edm_invalid_idxs,
             ) = edm_metrics(x, pos, batch, params["data_set"])
+            edm_valid_x_unique = edm_valid * edm_unique
 
             mols = builder.generate_rdkit_molecules(x, pos, batch, progress_bar=True)
 
             (xyz2mol_valid, xyz2mol_valid_x_unique, xyz2mol_valid_x_unique_x_novel) = (
                 compute_validity_uniqueness_novelty(mols, reference_smiles)
             )
+            atom_stability_lst.append(atom_stability)
+            molecule_stability_lst.append(mol_stability)
+            lookup_valid_lst.append(edm_valid)
+            lookup_valid_x_unique_lst.append(edm_valid_x_unique)
+            xyz2mol_valid_lst.append(xyz2mol_valid)
+            xyz2mol_valid_x_unique_lst.append(xyz2mol_valid_x_unique)
+            xyz2mol_valid_x_unique_x_novel_lst.append(xyz2mol_valid_x_unique_x_novel)
 
             with open(os.path.join(subdata_path, "evaluation_results.txt"), "w") as f:
                 f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
                 f.write(f"Molecule stability: {mol_stability*100:.2f}%\n")
                 f.write(f"Lookup valid: {edm_valid*100:.2f}%\n")
-                f.write(
-                    f"Lookup valid x unique: { edm_valid * edm_unique * 100:.2f}%\n"
-                )
+                f.write(f"Lookup valid x unique: { edm_valid_x_unique * 100:.2f}%\n")
                 f.write(f"xyz2mol valid: {xyz2mol_valid*100:.2f}%\n")
                 f.write(
                     f"xyz2mol valid x unique: {xyz2mol_valid_x_unique * 100:.2f}%\n"
@@ -187,38 +198,6 @@ if __name__ == "__main__":
                 f"Saved 3D visualization to {os.path.join(subdata_path, 'generated_molecules_3d.html')}"
             )
 
-    # Collect and average results across all seeds
-    atom_stability_lst = []
-    molecule_stability_lst = []
-    lookup_valid_lst = []
-    lookup_valid_x_unique_lst = []
-    xyz2mol_valid_lst = []
-    xyz2mol_valid_x_unique_lst = []
-    xyz2mol_valid_x_unique_x_novel_lst = []
-
-    for subdir in data_path.iterdir():
-        if Path.is_dir(subdir) and subdir.name.startswith("seed"):
-            results_file = os.path.join(subdir, "evaluation_results.txt")
-        else:
-            continue
-        with open(results_file, "r") as f:
-            lines = f.readlines()
-            atom_stability_lst.append(float(lines[0].strip().split(": ")[1].strip("%")))
-            molecule_stability_lst.append(
-                float(lines[1].strip().split(": ")[1].strip("%"))
-            )
-            lookup_valid_lst.append(float(lines[2].strip().split(": ")[1].strip("%")))
-            lookup_valid_x_unique_lst.append(
-                float(lines[3].strip().split(": ")[1].strip("%"))
-            )
-            xyz2mol_valid_lst.append(float(lines[4].strip().split(": ")[1].strip("%")))
-            xyz2mol_valid_x_unique_lst.append(
-                float(lines[5].strip().split(": ")[1].strip("%"))
-            )
-            xyz2mol_valid_x_unique_x_novel_lst.append(
-                float(lines[6].strip().split(": ")[1].strip("%"))
-            )
-
     atom_stability_mean, atom_stability_ci = compute_mean_and_95_ci(atom_stability_lst)
     molecule_stability_mean, molecule_stability_ci = compute_mean_and_95_ci(
         molecule_stability_lst
@@ -237,21 +216,25 @@ if __name__ == "__main__":
 
     with open(os.path.join(data_path, "evaluation_summary.txt"), "w") as f:
         f.write(
-            f"Atom stability: {atom_stability_mean:.2f}% ± {atom_stability_ci:.2f}%\n"
+            f"Atom stability: {atom_stability_mean*100:.2f}% ± {atom_stability_ci*100:.2f}%\n"
         )
         f.write(
-            f"Molecule stability: {molecule_stability_mean:.2f}% ± {molecule_stability_ci:.2f}%\n"
-        )
-        f.write(f"Lookup valid: {lookup_valid_mean:.2f}% ± {lookup_valid_ci:.2f}%\n")
-        f.write(
-            f"Lookup valid x unique: {lookup_valid_x_unique_mean:.2f}% ± {lookup_valid_x_unique_ci:.2f}%\n"
-        )
-        f.write(f"xyz2mol valid: {xyz2mol_valid_mean:.2f}% ± {xyz2mol_valid_ci:.2f}%\n")
-        f.write(
-            f"xyz2mol valid x unique: {xyz2mol_valid_x_unique_mean:.2f}% ± {xyz2mol_valid_x_unique_ci:.2f}%\n"
+            f"Molecule stability: {molecule_stability_mean*100:.2f}% ± {molecule_stability_ci*100:.2f}%\n"
         )
         f.write(
-            f"xyz2mol valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean:.2f}% ± {xyz2mol_valid_x_unique_x_novel_ci:.2f}%\n"
+            f"Lookup valid: {lookup_valid_mean*100:.2f}% ± {lookup_valid_ci*100:.2f}%\n"
+        )
+        f.write(
+            f"Lookup valid x unique: {lookup_valid_x_unique_mean*100:.2f}% ± {lookup_valid_x_unique_ci*100:.2f}%\n"
+        )
+        f.write(
+            f"xyz2mol valid: {xyz2mol_valid_mean*100:.2f}% ± {xyz2mol_valid_ci*100:.2f}%\n"
+        )
+        f.write(
+            f"xyz2mol valid x unique: {xyz2mol_valid_x_unique_mean*100:.2f}% ± {xyz2mol_valid_x_unique_ci*100:.2f}%\n"
+        )
+        f.write(
+            f"xyz2mol valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean*100:.2f}% ± {xyz2mol_valid_x_unique_x_novel_ci*100:.2f}%\n"
         )
         f.write(f"Data set: {params['data_set']}\n")
         f.write(f"RDKit version: {rdkit.__version__}\n")

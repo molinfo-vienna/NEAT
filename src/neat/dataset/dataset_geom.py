@@ -125,6 +125,24 @@ class GEOMDataSet(InMemoryDataset):
     """
 
     DRUGS_URL = "https://bits.csb.pitt.edu/files/geom_raw/"
+    VOCABULARY = {
+        1: 1,
+        5: 2,
+        6: 3,
+        7: 4,
+        8: 5,
+        9: 6,
+        13: 7,
+        14: 8,
+        15: 9,
+        16: 10,
+        17: 11,
+        33: 12,
+        35: 13,
+        53: 14,
+        80: 15,
+        83: 16,
+    }
 
     def __init__(
         self,
@@ -180,16 +198,6 @@ class GEOMDataSet(InMemoryDataset):
         return ["train_data.pt", "val_data.pt", "test_data.pt"]
 
     def process(self):
-        # Load vocabulary YAML
-        vocab_path = os.path.join(
-            os.path.dirname(os.path.dirname(self.root)), "scripts", "geom_vocab.yaml"
-        )
-        try:
-            with open(vocab_path, "r") as file:
-                vocabulary = yaml.safe_load(file)
-        except yaml.YAMLError as e:
-            print(f"Error loading vocabulary YAML file: {e}")
-
         for i, raw_path in enumerate(self.raw_paths):
             raw_path = self.raw_paths[i]
             with open(raw_path, "rb") as f:
@@ -202,7 +210,7 @@ class GEOMDataSet(InMemoryDataset):
                 mol_data = process_molecule(
                     smiles,
                     conformers,
-                    vocabulary,
+                    self.VOCABULARY,
                     num_conformers=self.num_conformers,
                 )
                 if mol_data is not None:
