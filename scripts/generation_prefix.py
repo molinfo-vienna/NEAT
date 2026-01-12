@@ -121,7 +121,7 @@ def generate(args: argparse.Namespace) -> None:
                     mask[dummy_idx] = False
                 prefix_x = x[mask]
                 prefix_pos = pos[mask]
-                prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
+                # prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
                 generated_batch = model.generate(
                     batch_size=num_mols_batch,
                     max_atoms=params["max_atoms"],

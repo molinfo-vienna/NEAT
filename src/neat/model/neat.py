@@ -674,6 +674,8 @@ class NEAT(LightningModule):
 
             rotation_augmentation = RandomRotationAugmentation()
             pos = rotation_augmentation.rotate_graphs_randomly(pos, batch_source)
+            trans = torch.randn(batch_size, 3, device=device)
+            pos += trans[batch_source]
         else:
             # (1) Sample initial atoms from the prior distribution of atom types in QM9
             if self.hparams.data_set == "QM9":
@@ -819,7 +821,7 @@ class NEAT(LightningModule):
 
                 x = torch.cat(updated_x, dim=0)  # [batch_size]
                 pos = torch.cat(updated_pos, dim=0)  # [batch_size, 3]
-                pos -= pos.mean(dim=0, keepdim=True)
+                # pos -= pos.mean(dim=0, keepdim=True)
                 batch_source = torch.cat(updated_batch, dim=0)  # [batch_size]
 
         return Batch(x=x, pos=pos, batch=batch_source)
