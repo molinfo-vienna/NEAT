@@ -14,6 +14,7 @@ from torch.nn import functional as F
 from torch.optim import Optimizer
 from torch_geometric.data import Data
 from torch_geometric.nn.pool import global_mean_pool
+from torch_geometric.data import Batch
 
 from .attention import Block
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
@@ -819,7 +820,7 @@ class NEAT(LightningModule):
                 pos -= pos.mean(dim=0, keepdim=True)
                 batch_source = torch.cat(updated_batch, dim=0)  # [batch_size]
 
-        return x, pos, batch_source
+        return Batch(x=x, pos=pos, batch=batch_source)
 
     def calculate_positions(
         self,

@@ -17,11 +17,11 @@ NUM_MOLECULES_PLOTTED = 100
 NUM_MOLECULES_PER_ROW = 5
 
 
-def compute_validity_uniqueness_novelty(mols, reference_smiles):
+def compute_validity_uniqueness_novelty(smiles, reference_smiles):
     """Compute validity, uniqueness and novelty ratio of generated molecules.
 
     Args:
-        mols (List(Mol)): generated molecules
+        smiles (List[str]): generated molecules as SMILES strings
         reference_smiles (List[str]): reference canonical SMILES strings for novelty computation
 
     Returns:
@@ -31,19 +31,17 @@ def compute_validity_uniqueness_novelty(mols, reference_smiles):
     unique_smiles = set()
     num_valid = 0
 
-    for mol in mols:
-        if mol is None:
+    for smile in smiles:
+        if smile is None:
             continue
         num_valid += 1
-        smiles = MolToSmiles(mol, canonical=True)
-        unique_smiles.add(smiles)
-
+        unique_smiles.add(smile)
     num_unique = len(unique_smiles)
     num_novel = len(unique_smiles - ref_set)
 
-    p_valid = num_valid / len(mols)
-    p_valid_unique = num_unique / len(mols)
-    p_valid_unique_novel = num_novel / len(mols)
+    p_valid = num_valid / len(smiles)
+    p_valid_unique = num_unique / len(smiles)
+    p_valid_unique_novel = num_novel / len(smiles)
     return p_valid, p_valid_unique, p_valid_unique_novel
 
 
@@ -114,10 +112,12 @@ if __name__ == "__main__":
             ) = edm_metrics(x, pos, batch, params["data_set"])
             edm_valid_x_unique = edm_valid * edm_unique
 
-            mols = builder.generate_rdkit_molecules(x, pos, batch, progress_bar=True)
+            smiles = builder.generate_smiles_from_rdkit_molecules(
+                x, pos, batch, progress_bar=True
+            )
 
             (xyz2mol_valid, xyz2mol_valid_x_unique, xyz2mol_valid_x_unique_x_novel) = (
-                compute_validity_uniqueness_novelty(mols, reference_smiles)
+                compute_validity_uniqueness_novelty(smiles, reference_smiles)
             )
             atom_stability_lst.append(atom_stability)
             molecule_stability_lst.append(mol_stability)
@@ -142,7 +142,9 @@ if __name__ == "__main__":
                 f.write(f"Data set: {params['data_set']}\n")
                 f.write(f"RDKit version: {rdkit.__version__}\n")
 
-            mols = mols[:NUM_MOLECULES_PLOTTED]
+            mols = builder.generate_rdkit_molecules(
+                x, pos, batch, break_after_k_mols=NUM_MOLECULES_PLOTTED
+            )
             img = Draw.MolsToGridImage(
                 mols,
                 molsPerRow=NUM_MOLECULES_PER_ROW,

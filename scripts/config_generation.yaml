@@ -2,6 +2,7 @@ checkpoints_path: logs/NEAT/version_26
 output_path: data/generated_26
 data_set: GEOM
 num_molecules: 1000
+batch_size: 1000
 max_atoms: 200
 num_time_steps: 60
 num_runs: 3

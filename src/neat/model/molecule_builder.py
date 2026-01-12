@@ -2,7 +2,7 @@ import logging
 import os
 
 import torch
-from rdkit.Chem import Mol, rdDetermineBonds, rdmolfiles
+from rdkit.Chem import Mol, rdDetermineBonds, rdmolfiles, MolToSmiles
 from tqdm import tqdm
 
 
@@ -53,10 +53,14 @@ class MoleculeBuilder:
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing the atom types, positions, and batch indices.
         """
-        x = torch.load(os.path.join(files_path, "x.pt")).detach().cpu()
-        pos = torch.load(os.path.join(files_path, "pos.pt")).detach().cpu()
-        batch = torch.load(os.path.join(files_path, "batch.pt")).detach().cpu()
-        return x, pos, batch
+        generated_mols = (
+            torch.load(
+                os.path.join(files_path, "generated_mols.pt"), weights_only=False
+            )
+            .detach()
+            .cpu()
+        )
+        return generated_mols.x, generated_mols.pos, generated_mols.batch
 
     def create_xyz_block(self, x: torch.Tensor, pos: torch.Tensor) -> str:
         """
@@ -86,6 +90,7 @@ class MoleculeBuilder:
         pos: torch.Tensor,
         batch: torch.Tensor,
         progress_bar: bool = False,
+        break_after_k_mols: int = None,
     ) -> list[Mol]:
         """
         Generates RDKit molecules from tensors of atom types and positions.
@@ -121,6 +126,56 @@ class MoleculeBuilder:
                     f"An error occurred while determining bonds for molecule in batch {batch_id}: {e}"
                 )
                 mol = None
+
             mols.append(mol)
 
+            if break_after_k_mols is not None and len(mols) >= break_after_k_mols:
+                break
+
         return mols
+
+    def generate_smiles_from_rdkit_molecules(
+        self,
+        x: torch.Tensor,
+        pos: torch.Tensor,
+        batch: torch.Tensor,
+        progress_bar: bool = False,
+    ) -> list[Mol]:
+        """
+        Generates RDKit molecules from tensors of atom types and positions.
+        Args:
+            x (torch.Tensor): A tensor of shape (n_atoms,).
+            pos (torch.Tensor): A tensor of shape (n_atoms, 3).
+            batch (torch.Tensor): A tensor of shape (n_atoms,).
+        Returns:
+            list[Mol]: A list of RDKit molecules.
+        """
+        smiles = []
+        unique_batches = batch.unique().tolist()
+
+        iterator = unique_batches
+        if progress_bar:
+            iterator = tqdm(unique_batches, desc="Generating RDKit molecules")
+        for batch_id in iterator:
+            mask = batch == batch_id
+            x_mol = x[mask]
+            pos_mol = pos[mask]
+
+            xyz_block = self.create_xyz_block(x_mol, pos_mol)
+            mol = rdmolfiles.MolFromXYZBlock(xyz_block)
+            try:
+                rdDetermineBonds.DetermineBonds(mol, charge=0, maxIterations=100000)
+            except ValueError:
+                mol = None
+            except Exception as e:
+                logging.warning(
+                    f"An error occurred while determining bonds for molecule in batch {batch_id}: {e}"
+                )
+                mol = None
+            if mol is not None:
+                smiles_str = MolToSmiles(mol, canonical=True)
+                smiles.append(smiles_str)
+            else:
+                smiles.append(None)
+
+        return smiles

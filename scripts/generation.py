@@ -5,6 +5,7 @@ import torch
 import torch_geometric
 import yaml
 from lightning import seed_everything
+from torch_geometric.data import Batch
 
 from neat.model import NEAT
 from neat.model.molecule_builder import MoleculeBuilder
@@ -48,40 +49,56 @@ def generate(args: argparse.Namespace) -> None:
     model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
 
     seeds = [i for i in range(params.get("num_runs", 1))]
+
+    num_molecules = params["num_molecules"]
+    batch_size = params["batch_size"]
+    num_batches = (num_molecules + batch_size - 1) // batch_size
+    if (num_molecules % batch_size) == 0:
+        num_mols_per_batch = [batch_size] * num_batches
+    else:
+        num_mols_per_batch = [batch_size] * (num_batches - 1) + [
+            num_molecules % batch_size
+        ]
+
     for seed in seeds:
         torch_geometric.seed_everything(seed)
         seed_everything(seed)
 
-        with torch.no_grad():
-            model.eval()
-            if "prefix_path" in params:
-                builder = MoleculeBuilder()
-                prefix_x, prefix_pos, _ = builder.load_tensor_from_file(
-                    os.path.join(ROOT, params["prefix_path"])
-                )
-                prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
-                x, pos, batch = model.generate(
-                    batch_size=params["num_molecules"],
-                    max_atoms=params["max_atoms"],
-                    num_time_steps=params["num_time_steps"],
-                    prefix_x=prefix_x,
-                    prefix_pos=prefix_pos,
-                    time_step_spacing=params["time_step_spacing"],
-                )
-            else:
-                x, pos, batch = model.generate(
-                    batch_size=params["num_molecules"],
-                    max_atoms=params["max_atoms"],
-                    num_time_steps=params["num_time_steps"],
-                    time_step_spacing=params["time_step_spacing"],
-                )
+        generated_batches = []
+        for batch_idx in range(num_batches):
+            num_mols_batch = num_mols_per_batch[batch_idx]
+            with torch.no_grad():
+                model.eval()
+                if "prefix_path" in params:
+                    builder = MoleculeBuilder()
+                    prefix_x, prefix_pos, _ = builder.load_tensor_from_file(
+                        os.path.join(ROOT, params["prefix_path"])
+                    )
+                    prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
+                    generated_batch = model.generate(
+                        batch_size=num_mols_batch,
+                        max_atoms=params["max_atoms"],
+                        num_time_steps=params["num_time_steps"],
+                        prefix_x=prefix_x,
+                        prefix_pos=prefix_pos,
+                        time_step_spacing=params["time_step_spacing"],
+                    )
+                else:
+                    generated_batch = model.generate(
+                        batch_size=num_mols_batch,
+                        max_atoms=params["max_atoms"],
+                        num_time_steps=params["num_time_steps"],
+                        time_step_spacing=params["time_step_spacing"],
+                    )
+            generated_batches.append(generated_batch)
 
-        out_dir = os.path.join(ROOT, params["output_path"], "unconditional", f"seed_{seed}")
+        generated_mols = Batch.from_data_list(generated_batches)
+        out_dir = os.path.join(
+            ROOT, params["output_path"], "unconditional", f"seed_{seed}"
+        )
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
-        torch.save(x, os.path.join(out_dir, "x.pt"))
-        torch.save(pos, os.path.join(out_dir, "pos.pt"))
-        torch.save(batch, os.path.join(out_dir, "batch.pt"))
+        torch.save(generated_mols, os.path.join(out_dir, "generated_mols.pt"))
 
 
 def parseArgs() -> argparse.Namespace:

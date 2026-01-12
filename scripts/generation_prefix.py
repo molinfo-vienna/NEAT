@@ -3,11 +3,11 @@ import ast
 import os
 
 from lightning import seed_everything
-import numpy as np
 from rdkit import Chem
 import torch
 import torch_geometric
 import yaml
+from torch_geometric.data import Batch
 
 from neat.model import NEAT
 from neat.dataset import DataModule, GEOMDataSet
@@ -97,33 +97,47 @@ def generate(args: argparse.Namespace) -> None:
     MODEL = NEAT
     model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
 
-    for mol_index, ((x, pos), dummy_idx) in enumerate(zip(mols, dummy_idxs)):
-        with torch.no_grad():
-            model.eval()
-            n_atoms = x.size(0)
-            mask = torch.ones(n_atoms, dtype=torch.bool)
-            if len(dummy_idx) > 0:
-                mask[dummy_idx] = False
-            prefix_x = x[mask]
-            prefix_pos = pos[mask]
-            prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
-            x, pos, batch = model.generate(
-                batch_size=params["num_molecules"],
-                max_atoms=params["max_atoms"],
-                num_time_steps=params["num_time_steps"],
-                prefix_x=prefix_x,
-                prefix_pos=prefix_pos,
-                time_step_spacing=params["time_step_spacing"],
-            )
+    num_molecules = params["num_molecules"]
+    batch_size = params["batch_size"]
+    num_batches = (num_molecules + batch_size - 1) // batch_size
+    if (num_molecules % batch_size) == 0:
+        num_mols_per_batch = [batch_size] * num_batches
+    else:
+        num_mols_per_batch = [batch_size] * (num_batches - 1) + [
+            num_molecules % batch_size
+        ]
 
-            out_dir = os.path.join(
-                params["output_path"], "prefix", f"prefix_{mol_index}"
-            )
-            if not os.path.exists(out_dir):
-                os.makedirs(out_dir)
-            torch.save(x, os.path.join(out_dir, "x.pt"))
-            torch.save(pos, os.path.join(out_dir, "pos.pt"))
-            torch.save(batch, os.path.join(out_dir, "batch.pt"))
+    for mol_index, ((x, pos), dummy_idx) in enumerate(zip(mols, dummy_idxs)):
+
+        generated_batches = []
+        for batch_idx in range(num_batches):
+            num_mols_batch = num_mols_per_batch[batch_idx]
+
+            with torch.no_grad():
+                model.eval()
+                n_atoms = x.size(0)
+                mask = torch.ones(n_atoms, dtype=torch.bool)
+                if len(dummy_idx) > 0:
+                    mask[dummy_idx] = False
+                prefix_x = x[mask]
+                prefix_pos = pos[mask]
+                prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
+                generated_batch = model.generate(
+                    batch_size=num_mols_batch,
+                    max_atoms=params["max_atoms"],
+                    num_time_steps=params["num_time_steps"],
+                    prefix_x=prefix_x,
+                    prefix_pos=prefix_pos,
+                    time_step_spacing=params["time_step_spacing"],
+                )
+            generated_batches.append(generated_batch)
+
+        generated_mols = Batch.from_data_list(generated_batches)
+
+        out_dir = os.path.join(params["output_path"], "prefix", f"prefix_{mol_index}")
+        if not os.path.exists(out_dir):
+            os.makedirs(out_dir)
+        torch.save(generated_mols, os.path.join(out_dir, "generated_mols.pt"))
 
 
 def parseArgs() -> argparse.Namespace:
