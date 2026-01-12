@@ -95,6 +95,8 @@ def compute_axial_cis(
 ):
     B, N, D = ts.shape
     freqs_all = []
+    actual_dim = dim
+    dim = (dim // in_dim + 1) * in_dim
     interval = 2 * in_dim
     for i in range(in_dim):
         freq = 1.0 / (
@@ -106,6 +108,7 @@ def compute_axial_cis(
         freq_cis_i = freq_cis_i.view(B, N, -1)
         freqs_all.append(freq_cis_i)
     freqs_cis = torch.cat(freqs_all, dim=-1)
+    freqs_cis = freqs_cis[..., : actual_dim // 2]
     return freqs_cis
 
 

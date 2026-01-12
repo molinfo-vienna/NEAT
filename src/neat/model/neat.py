@@ -230,10 +230,19 @@ class NEAT(LightningModule):
         # (6) Apply the atom mask to the input embedding
         x[atom_mask] = input_embedding  # [batch_size, max_atom_count, n_embd]
 
+        if self.hparams.rope is True:
+            dim_pos = [len(atom_count_source), atom_count_source.max(), 3]
+            positions = torch.zeros(
+                dim_pos, device=device
+            )  # [batch_size, max_atom_count, n_embd]
+            positions[atom_mask] = pos_source  # [batch_size, max_atom_count, n_embd]
+        else:
+            positions = None
+
         # (7) Pass through transformer blocks
         for block in self.transformer_blocks:
             x = block(
-                x, attn_mask=attn_mask, pos=pos_source
+                x, attn_mask=attn_mask, pos=positions
             )  # [batch_size, max_atom_count, n_embd]
 
         # (8) Apply the output layer normalization
