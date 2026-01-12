@@ -115,7 +115,7 @@ class MoleculeBuilder:
             xyz_block = self.create_xyz_block(x_mol, pos_mol)
             mol = rdmolfiles.MolFromXYZBlock(xyz_block)
             try:
-                rdDetermineBonds.DetermineBonds(mol, charge=0, maxIterations=10000)
+                rdDetermineBonds.DetermineBonds(mol, charge=0, maxIterations=100000)
             except ValueError:
                 # logging.warning(
                 #     f"Could not determine bonds for molecule in batch {batch_id} with neutral total charge."
