@@ -6,7 +6,7 @@ import numpy as np
 import py3Dmol
 import rdkit
 import yaml
-from rdkit.Chem import AllChem, Draw, MolToSmiles, rdDepictor
+from rdkit.Chem import AllChem, Draw, rdDepictor
 
 from neat.dataset import DataModule
 from neat.model.molecule_builder import MoleculeBuilder

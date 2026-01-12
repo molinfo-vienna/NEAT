@@ -4,6 +4,7 @@ import os
 import torch
 import torch_geometric
 import yaml
+from datetime import datetime
 from lightning import seed_everything
 from torch_geometric.data import Batch
 
@@ -63,7 +64,7 @@ def generate(args: argparse.Namespace) -> None:
     for seed in seeds:
         torch_geometric.seed_everything(seed)
         seed_everything(seed)
-
+        seed_start_time = datetime.now()
         generated_batches = []
         for batch_idx in range(num_batches):
             num_mols_batch = num_mols_per_batch[batch_idx]
@@ -82,6 +83,7 @@ def generate(args: argparse.Namespace) -> None:
                         prefix_x=prefix_x,
                         prefix_pos=prefix_pos,
                         time_step_spacing=params["time_step_spacing"],
+                        integration_method=params["integration_method"],
                     )
                 else:
                     generated_batch = model.generate(
@@ -89,6 +91,7 @@ def generate(args: argparse.Namespace) -> None:
                         max_atoms=params["max_atoms"],
                         num_time_steps=params["num_time_steps"],
                         time_step_spacing=params["time_step_spacing"],
+                        integration_method=params["integration_method"],
                     )
             generated_batches.append(generated_batch)
 
@@ -99,6 +102,9 @@ def generate(args: argparse.Namespace) -> None:
         if not os.path.exists(out_dir):
             os.makedirs(out_dir)
         torch.save(generated_mols, os.path.join(out_dir, "generated_mols.pt"))
+
+        seed_end_time = datetime.now()
+        print(f"Generation time for seed {seed}: {seed_end_time - seed_start_time}")
 
 
 def parseArgs() -> argparse.Namespace:
@@ -116,4 +122,7 @@ def parseArgs() -> argparse.Namespace:
 
 
 if __name__ == "__main__":
+    start_time = datetime.now()
     generate(parseArgs())
+    end_time = datetime.now()
+    print(f"Total generation time: {end_time - start_time}")

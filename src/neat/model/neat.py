@@ -648,6 +648,7 @@ class NEAT(LightningModule):
         prefix_x: Tensor = None,
         prefix_pos: Tensor = None,
         time_step_spacing: str = "linear",
+        integration_method: str = "euler_maruyama",
     ) -> tuple[Tensor, Tensor, Tensor]:
         """
         Generate a molecule using the flow matching network.
@@ -777,6 +778,7 @@ class NEAT(LightningModule):
                     num_time_steps,
                     device,
                     time_step_spacing,
+                    integration_method,
                 )
 
                 # (6.10) Update the x, pos, and batch source tensors
