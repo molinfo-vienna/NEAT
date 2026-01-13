@@ -39,11 +39,13 @@ class GenerationMonitor(Callback):
             or trainer.current_epoch == 0
         ):
             return
-        x, pos, batch = pl_module.generate(batch_size=self.num_samples)
+        generated_mols = pl_module.generate(batch_size=self.num_samples)
 
         if self.dataset == "QM9":
             builder = MoleculeBuilder(vocab=pl_module.hparams.data_set)
-            mols = builder.generate_rdkit_molecules(x, pos, batch)
+            mols = builder.generate_rdkit_molecules(
+                generated_mols.x, generated_mols.pos, generated_mols.batch
+            )
             n_valid = self.compute_validity(mols)
             n_unique = self.compute_uniqueness(mols)
             frac_valid = n_valid / self.num_samples
@@ -56,7 +58,12 @@ class GenerationMonitor(Callback):
                 frac_valid,
                 frac_unique,
                 _,
-            ) = edm_metrics(x.cpu(), pos.cpu(), batch.cpu(), self.dataset)
+            ) = edm_metrics(
+                generated_mols.x.cpu(),
+                generated_mols.pos.cpu(),
+                generated_mols.batch.cpu(),
+                self.dataset,
+            )
         else:
             raise ValueError(f"Unknown dataset: {self.dataset}")
 
