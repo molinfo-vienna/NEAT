@@ -884,33 +884,23 @@ class NEAT(LightningModule):
 
         dts = time_steps[1:] - time_steps[:-1]
 
+        # (2) Find position of the atoms through integration of the time trajectory
         if integration_method == "euler":
-            # (2) Find position of the atoms via flow matching using Euler method
             for dt, time_step in zip(dts, time_steps[:-1]):
                 # for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
                 time_step = time_step.expand(x_next.shape[0])
-                delta_pos = dt * self.compute_vector_field(
+                velocity = self.compute_vector_field(
                     x_next,
                     pos_next,
                     time_step,
                     source_set_representation,
                     device=device,
                 )
-                pos_next = pos_next + delta_pos
+                delta_pos = dt * velocity
+                pos_next += delta_pos
         elif integration_method == "euler_maruyama":
             # Following: https://github.com/apple/ml-simplefold/blob/0f44c59b1664e58acf2c72145b3f88c9c16dd6c4/src/simplefold/model/torch/sampler.py
-            def diffusion_coefficient(t, epsilon=1e-3, w_cutoff=0.9):
-                # determine diffusion coefficient
-                w = (1.0 - t) / (t + epsilon)
-                if t >= w_cutoff:
-                    w = torch.zeros_like(t)
-                return w
-
-            # (2) Find position of the atoms via flow matching using Euler method
-            # for time_step in torch.linspace(0, 1, num_time_steps, device=device)[:-1]:
             for dt, time_step in zip(dts, time_steps[:-1]):
-                # dt = 1 / num_time_steps
-                eps = torch.randn_like(pos_next)
                 velocity = self.compute_vector_field(
                     x_next,
                     pos_next,
@@ -918,13 +908,20 @@ class NEAT(LightningModule):
                     source_set_representation,
                     device=device,
                 )
-                score = self.compute_score_from_velocity(velocity, pos_next, time_step)
-                diff_coeff = diffusion_coefficient(time_step)
-                drift = velocity + diff_coeff * score
-                mean_pos = pos_next + drift * dt
-                pos_next = mean_pos + torch.sqrt(2.0 * diff_coeff * dt * 0.3) * eps
+                delta_pos = self.compute_euler_maruyama_step(
+                    pos_next, velocity, time_step, dt
+                )
+                pos_next += delta_pos
 
         return pos_next
+
+    def compute_euler_maruyama_step(self, pos_next, velocity, time_step, dt, tau=0.3):
+        eps = torch.randn_like(pos_next)
+        score = self.compute_score_from_velocity(velocity, pos_next, time_step)
+        diff_coeff = self.diffusion_coefficient(time_step)
+        drift = velocity + diff_coeff * score
+        delta_pos = drift * dt + torch.sqrt(2.0 * diff_coeff * dt * tau) * eps
+        return delta_pos
 
     def compute_score_from_velocity(self, v_t, y_t, t):
         alpha_t, d_alpha_t = t, 1
@@ -934,3 +931,10 @@ class NEAT(LightningModule):
         var = sigma_t**2 - reverse_alpha_ratio * d_sigma_t * sigma_t
         score = (reverse_alpha_ratio * v_t - mean) / var
         return score
+
+    def diffusion_coefficient(self, t, epsilon=1e-3, w_cutoff=0.9):
+        # determine diffusion coefficient
+        w = (1.0 - t) / (t + epsilon)
+        if t >= w_cutoff:
+            w = torch.zeros_like(t)
+        return w
