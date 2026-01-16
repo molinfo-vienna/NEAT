@@ -39,9 +39,11 @@ class GenerationMonitor(Callback):
             or trainer.current_epoch == 0
         ):
             return
-        generated_mols = pl_module.generate(batch_size=self.num_samples)
 
         if self.dataset == "QM9":
+            generated_mols = pl_module.generate(
+                batch_size=self.num_samples, integration_method="euler"
+            )
             builder = MoleculeBuilder(vocab=pl_module.hparams.data_set)
             mols = builder.generate_rdkit_molecules(
                 generated_mols.x, generated_mols.pos, generated_mols.batch
@@ -52,6 +54,9 @@ class GenerationMonitor(Callback):
             frac_unique = n_unique / n_valid if n_valid > 0 else 0.0
 
         elif self.dataset == "GEOM":
+            generated_mols = pl_module.generate(
+                batch_size=self.num_samples, integration_method="euler_maruyama"
+            )
             (
                 _,
                 _,
