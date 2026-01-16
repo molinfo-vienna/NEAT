@@ -1,12 +1,14 @@
 import logging
-import re
 import os
+from pathlib import Path
+import re
+import subprocess
+import tarfile
 from typing import List, Optional, Tuple, Dict, Set
 
 import networkx as nx
 import numpy as np
 import torch
-import yaml
 from rdkit import Chem, RDLogger
 from rdkit.Chem import rdDetermineBonds
 from torch_geometric.data import Data, InMemoryDataset
@@ -44,6 +46,8 @@ class QM9DataSet(InMemoryDataset):
         8: 4,
         9: 5,
     }
+    QM9_URL = "https://ndownloader.figshare.com/files/3195389"
+    UNCHARACTERIZED_URL = "https://ndownloader.figshare.com/files/3195404"
 
     def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
         super().__init__(root, transform, pre_transform, pre_filter)
@@ -57,6 +61,50 @@ class QM9DataSet(InMemoryDataset):
     @property
     def processed_file_names(self):
         return ["qm9.pt"]
+
+    def download(self):
+        raw_path = os.path.join(self.root, "raw")
+        qm9_path = os.path.join(raw_path, self.raw_file_names[0])
+        xyz_path = os.path.join(raw_path, "xyz_files")
+        unchar_path = os.path.join(raw_path, self.raw_file_names[1])
+
+        if not os.path.exists(unchar_path):
+            subprocess.run(
+                [
+                    "wget",
+                    "-O",
+                    unchar_path,
+                    self.UNCHARACTERIZED_URL,
+                ],
+                check=True,
+            )
+            print("Downloaded uncharacterized.txt file.")
+
+        if not os.path.exists(qm9_path):
+            subprocess.run(
+                [
+                    "wget",
+                    "-O",
+                    qm9_path,
+                    self.QM9_URL,
+                ],
+                check=True,
+            )
+            print("Downloaded QM9 dataset.")
+
+            with tarfile.open(qm9_path, mode="r:*") as tar:
+                # Safe extraction to avoid path traversal
+                def is_within_directory(directory, target):
+                    directory = Path(directory).resolve()
+                    target = Path(target).resolve()
+                    return str(target).startswith(str(directory))
+
+                for member in tar.getmembers():
+                    target_path = Path(xyz_path) / member.name
+                    if not is_within_directory(Path(xyz_path), target_path):
+                        raise RuntimeError(f"Blocked unsafe path: {member.name}")
+                tar.extractall(path=Path(xyz_path))
+            print("Extracted QM9 dataset.")
 
     @staticmethod
     def normalize_numeric_token(tok: str) -> str:
