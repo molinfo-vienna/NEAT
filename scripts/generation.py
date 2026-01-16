@@ -70,29 +70,13 @@ def generate(args: argparse.Namespace) -> None:
             num_mols_batch = num_mols_per_batch[batch_idx]
             with torch.no_grad():
                 model.eval()
-                if "prefix_path" in params:
-                    builder = MoleculeBuilder()
-                    prefix_x, prefix_pos, _ = builder.load_tensor_from_file(
-                        os.path.join(ROOT, params["prefix_path"])
-                    )
-                    prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
-                    generated_batch = model.generate(
-                        batch_size=num_mols_batch,
-                        max_atoms=params["max_atoms"],
-                        num_time_steps=params["num_time_steps"],
-                        prefix_x=prefix_x,
-                        prefix_pos=prefix_pos,
-                        time_step_spacing=params["time_step_spacing"],
-                        integration_method=params["integration_method"],
-                    )
-                else:
-                    generated_batch = model.generate(
-                        batch_size=num_mols_batch,
-                        max_atoms=params["max_atoms"],
-                        num_time_steps=params["num_time_steps"],
-                        time_step_spacing=params["time_step_spacing"],
-                        integration_method=params["integration_method"],
-                    )
+                generated_batch = model.generate(
+                    batch_size=num_mols_batch,
+                    max_atoms=params["max_atoms"],
+                    num_time_steps=params["num_time_steps"],
+                    time_step_spacing=params["time_step_spacing"],
+                    integration_method=params["integration_method"],
+                )
             generated_batches.append(generated_batch)
 
         generated_mols = Batch.from_data_list(generated_batches)
