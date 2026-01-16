@@ -197,7 +197,7 @@ def generate_3d_coords_from_patterns(patterns, num_examples=100):
 
 if __name__ == "__main__":
     # (1) Load SMILES from GEOM test data
-    data_path = os.path.join(os.getcwd(), "data", "GEOM", "raw", "test_data.pickle")
+    data_path = os.path.join(os.getcwd(), "data", "GEOM", "raw", "train_data.pickle")
     with open(data_path, "rb") as f:
         mol_list = pickle.load(f)
     smiles_list = [smiles for smiles, _ in mol_list]
@@ -242,7 +242,7 @@ if __name__ == "__main__":
 
     img = Draw.MolsToGridImage(
         mols2d,
-        molsPerRow=10,
-        subImgSize=(400, 400),
+        molsPerRow=5,
+        subImgSize=(300, 300),
     )
     img.save(os.path.join(os.getcwd(), "data", "GEOM", "prefixes.png"))
