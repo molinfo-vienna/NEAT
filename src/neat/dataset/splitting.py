@@ -29,7 +29,7 @@ class SourceTargetSplitter:
         self,
         data: Data,
         beta: float = 1.5,
-        gamma: float = 0.55,
+        gamma: float = 0.45,
         device: torch.device = None,
     ):
         """
@@ -90,7 +90,7 @@ class SourceTargetSplitter:
             permutation = torch.randperm(one_hop_neighbours_idx.size(0))
             one_hop_neighbours_idx = one_hop_neighbours_idx[permutation]
             one_hop_neighbours_idx = one_hop_neighbours_idx[
-                : int(len(one_hop_neighbours_idx) * gamma)
+                : int(len(one_hop_neighbours_idx) * (1 - gamma))
             ]
 
             # Add these neighbours to the random nodes
