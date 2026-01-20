@@ -13,3 +13,4 @@ plotting.ipynb
 build
 .flake8
 .ipynb
+.sh
