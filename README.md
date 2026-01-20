@@ -1,11 +1,15 @@
 # NEAT: <ins>N</ins>eighborhood-Guided, <ins>E</ins>fficient, <ins>A</ins>utoregressive Set <ins>T</ins>ransformer for 3D Molecular Generation
 
-<img src="images/thumbnail.png" alt="image" width="400">
+<p align="center">
+  <img src="images/thumbnail.png" alt="image" width="300">
+</p>
 
 
 Welcome to the NEAT repository. NEAT is an autoregressive model that builds 3D molecules one atom at a time using a set transformer. It feeds the transformer’s output into a flow model to predict where the next atom should be by modeling the probability over its possible positions. The animation below shows how simple Gaussian noise is gradually transformed via the learned vector field into a distribution that points to the next atom’s location.
 
-<img src="images/molecule_build.gif" alt="image" width="300">
+<p align="center">
+  <img src="images/molecule_build.gif" alt="image" width="300">
+</p>
 
 # Installation
 
