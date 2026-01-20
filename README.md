@@ -1,11 +1,11 @@
 # NEAT: <ins>N</ins>eighborhood-Guided, <ins>E</ins>fficient, <ins>A</ins>utoregressive Set <ins>T</ins>ransformer for 3D Molecular Generation
 
-![image](images/thumbnail.png){width=300px}
+<img src="images/thumbnail.png" alt="image" width="400">
 
 
 Welcome to the NEAT repository. NEAT is an autoregressive model that builds 3D molecules one atom at a time using a set transformer. It feeds the transformer’s output into a flow model to predict where the next atom should be by modeling the probability over its possible positions. The animation below shows how simple Gaussian noise is gradually transformed via the learned vector field into a distribution that points to the next atom’s location.
 
-![image](images/molecule_build.gif){width=300px}
+<img src="images/molecule_build.gif" alt="image" width="300">
 
 # Installation
 
@@ -67,7 +67,7 @@ python scripts/generation.py
 
 3. What you get:
 
-- Generated molecules stored in a generated_mols.pt file. The num_runs parameter controls how many times the generation is run with a different random seed.
+- Generated molecules stored in a generated_mols.pt file.
 
 
 ## Complete prefixes
@@ -95,7 +95,7 @@ python scripts/generation_prefix.py
 
 4. What you get:
 
-- Completed molecules stored in a generated_mols.pt file for each of the prefixes (100 prefixes if using the default GEOM prefixes). The num_runs parameter controls how many times the generation is run with a different random seed.
+- Completed molecules stored in a generated_mols.pt file for each of the prefixes (100 prefixes if using the default GEOM prefixes).
 
 
 ## Evaluate generated molecules or completed prefixes
