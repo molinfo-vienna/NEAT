@@ -1,10 +1,10 @@
 import logging
 import os
-from pathlib import Path
 import re
 import subprocess
 import tarfile
-from typing import List, Optional, Tuple, Dict, Set
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple
 
 import networkx as nx
 import numpy as np
@@ -13,7 +13,6 @@ from rdkit import Chem, RDLogger
 from rdkit.Chem import rdDetermineBonds
 from torch_geometric.data import Data, InMemoryDataset
 from tqdm import tqdm
-
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -49,7 +48,13 @@ class QM9DataSet(InMemoryDataset):
     QM9_URL = "https://ndownloader.figshare.com/files/3195389"
     UNCHARACTERIZED_URL = "https://ndownloader.figshare.com/files/3195404"
 
-    def __init__(self, root, transform=None, pre_transform=None, pre_filter=None):
+    def __init__(
+        self,
+        root,
+        transform=None,
+        pre_transform=None,
+        pre_filter=None,
+    ):
         super().__init__(root, transform, pre_transform, pre_filter)
         self.root = root
         self.load(self.processed_paths[0])
@@ -110,10 +115,17 @@ class QM9DataSet(InMemoryDataset):
     def normalize_numeric_token(tok: str) -> str:
         """
         Normalize nonstandard scientific notation to something float() accepts.
+
         Examples:
         '2.1997*^-6' -> '2.1997e-6'
         '+3.0*^2'    -> '+3.0e2'
         '2.0×10^-3'  -> '2.0e-3'
+
+        Args:
+            tok: string token representing a number.
+
+        Returns:
+            Normalized string token.
         """
         s = tok.strip()
         s = s.rstrip(",;")

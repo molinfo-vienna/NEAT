@@ -3,15 +3,27 @@ from torch_geometric.data import Data
 
 
 class SourceTargetSplitter:
+    """Class to create source-target splits for molecular graphs.
+
+    Args:
+        splitting_mode (str): The mode of splitting to use. Default is "neighborhood".
+        target_set_max_size (int): Maximum size of the target set. Default is -1 (no limit).
+    """
+
     def __init__(
-        self, splitting_mode: str = "neighborhood", target_set_max_size: int = -1
+        self,
+        splitting_mode: str = "neighborhood",
+        target_set_max_size: int = -1,
     ):
         self.splitting_mode = splitting_mode
         self.target_set_max_size = target_set_max_size
 
-    def create_source_target_split(self, data: Data, device: torch.device = None):
-        """
-        Creates a source-target split for a batch of data.
+    def create_source_target_split(
+        self,
+        data: Data,
+        device: torch.device = None,
+    ):
+        """Create a source-target split for a batch of data.
 
         Args:
             data (Data): The data to split.
@@ -33,7 +45,7 @@ class SourceTargetSplitter:
         device: torch.device = None,
     ):
         """
-        Splits atoms into source and target sets, using a neighborhood-guided approach.
+        Split atoms into source and target sets, using a neighborhood-guided approach.
 
         Args:
             data (Data): The data to split.

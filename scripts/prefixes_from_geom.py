@@ -1,24 +1,30 @@
+import json
 import os
 import pickle
-from rdkit import Chem
-from rdkit.Chem import rdDepictor
 from collections import defaultdict
+from datetime import datetime
+
+from rdkit import Chem, RDLogger
+from rdkit.Chem import AllChem, Draw, SDWriter, rdDepictor
 from tqdm import tqdm
-from rdkit.Chem import AllChem
-import json
-from rdkit import RDLogger
-from rdkit.Chem import Draw
-from rdkit.Chem import SDWriter
 
 RDLogger.DisableLog("rdApp.*")
 
+ROOT = os.getcwd()
 
-def get_ring_system_components(mol):
-    """
-    Return a list of sets of atom indices, one set per ring system.
+
+def get_ring_system_components(mol: Chem.Mol) -> list[set[int]]:
+    """Find sets of atoms constituting ring systems.
+
     A ring system is defined as the connected components of the subgraph
     induced by atoms that are in any ring, with edges restricted to bonds
     whose both endpoints are ring atoms.
+
+    Args:
+        mol (Chem.Mol): RDKit Mol object.
+
+    Returns:
+        list[set[int]]: list of sets of atom indices for each ring system.
     """
     ri = mol.GetRingInfo()
     ring_atoms = set(ri.AtomRings()[0]) if ri.AtomRings() else set()
@@ -55,13 +61,19 @@ def get_ring_system_components(mol):
     return components
 
 
-def build_ring_pattern_submol(mol, ring_atoms_set):
-    """
-    Build a submol for a given ring system:
-    - Includes all ring atoms and bonds among them.
-    - Adds explicit H neighbors attached to ring atoms.
-    - Replaces any non-H neighbor outside the ring system with a single 'R' dummy atom.
-    Returns the constructed submol.
+def build_ring_pattern_submol(mol: Chem.Mol, ring_atoms_set: set[int]) -> Chem.Mol:
+    """Build a submol for a given ring system
+
+    1. Includes all ring atoms and bonds between them.
+    2. Adds explicit H neighbors attached to ring atoms.
+    3. Replaces any non-H neighbor outside the ring system with a single 'R' dummy atom.
+
+    Args:
+        mol (Chem.Mol): RDKit Mol object.
+        ring_atoms_set (set[int]): set of atom indices in the ring system.
+
+    Returns:
+        submol (Chem.Mol): RDKit Mol object representing the ring pattern.
     """
     # Work on a version with explicit Hs so we capture H attachments
     molH = Chem.AddHs(mol)
@@ -108,11 +120,14 @@ def build_ring_pattern_submol(mol, ring_atoms_set):
     return submol
 
 
-def mine_ring_patterns(smiles_list):
-    """
+def mine_ring_patterns(smiles_list: list[str]) -> dict[str, int]:
+    """Mine ring patterns from a list of SMILES strings.
+
+    Args:
+        smiles_list (list[str]): list of SMILES strings to mine patterns from.
+
     Returns:
-      counts: dict pattern_key -> count
-      examples: dict pattern_key -> list of tuples (smiles, mol_idx)
+        dict[str, int]: dict mapping canonical SMILES of ring patterns to their counts.
     """
     counts = defaultdict(int)
 
@@ -133,19 +148,24 @@ def mine_ring_patterns(smiles_list):
                 submol = build_ring_pattern_submol(mol, comp)
                 key = Chem.MolToSmiles(submol, canonical=True, kekuleSmiles=False)
                 counts[key] += 1
-        except Exception as e:
-            # print(f"Error processing SMILES at index {i}: {smi} | Error: {e}")
+        except Exception:
+            # print(f"Error processing SMILES at index {i}: {smi}. Skipping.")
             continue
 
     return dict(counts)
 
 
 def generate_3d_coords_from_patterns(patterns, num_examples=100):
-    """
-    patterns: list of SMILES strings that may contain '*' dummies.
+    """Generate 3D coordinates for a list of SMILES patterns with dummy atoms.
+
+    Args:
+        patterns (list[str]): list of SMILES strings that may contain '*' dummies.
+        num_examples (int): maximum number of examples to generate 3D coordinates for.
+
     Returns:
-      - mols3d: molecules with '*' dummies, explicit Hs, and a 3D conformer
-      - dummy_indices_list: list of dummy index lists per molecule
+        tuple: A tuple containing:
+            - mols3d (list[Chem.Mol]): molecules with '*' dummies, explicit Hs, and a 3D conformer
+            - dummy_indices_list (list[list[int]]): list of dummy index lists per molecule
     """
     mols3d = []
     dummy_indices_list = []
@@ -196,8 +216,10 @@ def generate_3d_coords_from_patterns(patterns, num_examples=100):
 
 
 if __name__ == "__main__":
-    # (1) Load SMILES from GEOM test data
-    data_path = os.path.join(os.getcwd(), "data", "GEOM", "raw", "train_data.pickle")
+    start_time = datetime.now()
+
+    # (1) Load SMILES from GEOM training data
+    data_path = os.path.join(ROOT, "data", "GEOM", "raw", "train_data.pickle")
     with open(data_path, "rb") as f:
         mol_list = pickle.load(f)
     smiles_list = [smiles for smiles, _ in mol_list]
@@ -217,7 +239,7 @@ if __name__ == "__main__":
     print("Dummy indices:", dummy_idx)
 
     # (4) Write 3D coords to SDF
-    w = SDWriter(os.path.join(os.getcwd(), "data", "GEOM", "prefixes.sdf"))
+    w = SDWriter(os.path.join(ROOT, "data", "GEOM", "prefixes.sdf"))
     for m in mols3d:
         w.write(m)
     w.close()
@@ -245,4 +267,7 @@ if __name__ == "__main__":
         molsPerRow=5,
         subImgSize=(300, 300),
     )
-    img.save(os.path.join(os.getcwd(), "data", "GEOM", "prefixes.png"))
+    img.save(os.path.join(ROOT, "data", "GEOM", "prefixes.png"))
+
+    end_time = datetime.now()
+    print(f"Total time: {end_time - start_time}")

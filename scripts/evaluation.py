@@ -1,5 +1,6 @@
 import argparse
 import os
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -12,12 +13,15 @@ from neat.dataset import DataModule
 from neat.model.molecule_builder import MoleculeBuilder
 from neat.utils.edm_metrics import edm_metrics
 
-RESOLUTION = 400
 NUM_MOLECULES_PLOTTED = 100
 NUM_MOLECULES_PER_ROW = 5
+RESOLUTION = 400
+ROOT = os.getcwd()
 
 
-def compute_validity_uniqueness_novelty(smiles, reference_smiles):
+def compute_validity_uniqueness_novelty(
+    smiles: list[str], reference_smiles: list[str]
+) -> tuple[float, float, float]:
     """Compute validity, uniqueness and novelty ratio of generated molecules.
 
     Args:
@@ -25,7 +29,7 @@ def compute_validity_uniqueness_novelty(smiles, reference_smiles):
         reference_smiles (List[str]): reference canonical SMILES strings for novelty computation
 
     Returns:
-        Tuple[float, float, float]: validity, uniqueness, novelty ratios
+        Tuple[float, float, float]: validity, uniqueness, and novelty ratios
     """
     ref_set = set(reference_smiles)
     unique_smiles = set()
@@ -45,44 +49,45 @@ def compute_validity_uniqueness_novelty(smiles, reference_smiles):
     return p_valid, p_valid_unique, p_valid_unique_novel
 
 
-def compute_mean_and_95_ci(data):
+def compute_mean_and_95_ci(data: list[float]) -> tuple[float, float]:
+    """Compute mean and 95% confidence interval for a list of data.
+
+    Args:
+        data (List[float]): list of data points.
+
+    Returns:
+        Tuple[float, float]: mean and 95% confidence interval.
+    """
     mean = np.mean(data)
     std_err = np.std(data) / np.sqrt(len(data))
     margin_of_error = 1.96 * std_err
     return mean, margin_of_error
 
 
-def parseArgs() -> argparse.Namespace:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--config",
-        dest="config_file",
-        required=False,
-        metavar="<file>",
-        help="Config file for evaluation.",
-    )
-    return parser.parse_args()
+def evaluate(args: argparse.Namespace) -> None:
+    """Evaluate generated molecules using various metrics.
 
+    Args:
+        args (argparse.Namespace): Command line arguments.
 
-if __name__ == "__main__":
-    args = parseArgs()
-    ROOT = os.getcwd()
-
+    Returns:
+        None
+    """
     # Load config file
     if args.config_file is not None:
-        CONFIG_FILE_PATH = args.config_file
-        print(f"Using config file: {CONFIG_FILE_PATH}")
+        config_file_path = args.config_file
+        print(f"Using config file: {config_file_path}")
     else:
-        CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_evaluation.yaml")
-        print(f"Using default config file: {CONFIG_FILE_PATH}")
+        config_file_path = os.path.join(ROOT, "scripts", "config_evaluation.yaml")
+        print(f"Using default config file: {config_file_path}")
     params = yaml.load(
-        open(CONFIG_FILE_PATH, "r"),
+        open(config_file_path, "r"),
         Loader=yaml.FullLoader,
     )
 
     # Load preprocessed training data for computing novelty
-    DATA_ROOT = os.path.join(ROOT, "data")
-    datamodule = DataModule(DATA_ROOT, data_set=params["data_set"])
+    data_root = os.path.join(ROOT, "data")
+    datamodule = DataModule(data_root, data_set=params["data_set"])
     datamodule.setup()
     reference_smiles = datamodule.training_data.smiles
 
@@ -116,7 +121,7 @@ if __name__ == "__main__":
                 x, pos, batch, progress_bar=True
             )
 
-            (xyz2mol_valid, xyz2mol_valid_x_unique, xyz2mol_valid_x_unique_x_novel) = (
+            xyz2mol_valid, xyz2mol_valid_x_unique, xyz2mol_valid_x_unique_x_novel = (
                 compute_validity_uniqueness_novelty(smiles, reference_smiles)
             )
             atom_stability_lst.append(atom_stability)
@@ -240,3 +245,24 @@ if __name__ == "__main__":
         )
         f.write(f"Data set: {params['data_set']}\n")
         f.write(f"RDKit version: {rdkit.__version__}\n")
+
+
+if __name__ == "__main__":
+    start_time = datetime.now()
+
+    parser = argparse.ArgumentParser()
+
+    parser.add_argument(
+        "--config",
+        dest="config_file",
+        required=False,
+        metavar="<file>",
+        help="Config file for evaluation.",
+    )
+
+    args = parser.parse_args()
+
+    evaluate(args)
+
+    end_time = datetime.now()
+    print(f"Total evaluation time: {end_time - start_time}")

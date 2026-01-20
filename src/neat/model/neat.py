@@ -1,10 +1,8 @@
-"""
-Taken and modified from the nanoGPT repository:
+"""Taken and modified from the nanoGPT repository:
 https://github.com/karpathy/nanoGPT/blob/master/model.py
 """
 
 import math
-from tqdm import tqdm
 
 import torch
 import torch.nn as nn
@@ -12,17 +10,19 @@ from lightning import LightningModule
 from torch import Tensor
 from torch.nn import functional as F
 from torch.optim import Optimizer
-from torch_geometric.data import Data
+from torch_geometric.data import Batch, Data
 from torch_geometric.nn.pool import global_mean_pool
-from torch_geometric.data import Batch
+from tqdm import tqdm
 
+from ..dataset.augmentation import RandomRotationAugmentation
 from .attention import Block
 from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
 from .simple_mlp import SimpleMLPAdaLN
-from ..dataset.augmentation import RandomRotationAugmentation
 
 
 class NEAT(LightningModule):
+    """NEAT model for molecular generation using continuous flow matching."""
+
     def __init__(self, **params) -> None:
         super(NEAT, self).__init__()
         self.hparams.setdefault("noise_std", 1.0)
@@ -106,8 +106,8 @@ class NEAT(LightningModule):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def get_num_params(self) -> int:
-        """
-        Return the number of parameters in the model.
+        """Return the number of parameters in the model.
+
         For non-embedding count (default), the position embeddings get subtracted.
         The token embeddings would too, except due to the parameter sharing these
         params are actually used as weights in the final layer, so we include them.
@@ -117,6 +117,14 @@ class NEAT(LightningModule):
         return n_params
 
     def forward(self, data: Data) -> tuple[Tensor, Tensor, Tensor]:
+        """Forward pass of the NEAT model.
+
+        Args:
+            data: Batch of data.
+
+        Returns:
+            Tuple of total loss, atom type prediction loss, and flow matching loss.
+        """
         device = data.x.device
 
         # We split the molecular data into source and target atom sets.
@@ -170,8 +178,7 @@ class NEAT(LightningModule):
         batch_source: Tensor,
         device: torch.device,
     ) -> Tensor:
-        """
-        Compute the representation of the source atom sets.
+        """Compute the representation of the source atom sets.
 
         Args:
             x_source (Tensor): The atom types of the source atoms. shape: [n_source_atoms]
@@ -265,8 +272,7 @@ class NEAT(LightningModule):
         stop_tokens: Tensor,
         device: torch.device,
     ) -> Tensor:
-        """
-        Compute the atom type prediction loss.
+        """Compute the atom type prediction loss.
 
         Args:
             logits (Tensor): The logits of the atom type predictions. shape: [n_target_sets, vocab_size]
@@ -329,8 +335,7 @@ class NEAT(LightningModule):
         device: torch.device,
         resampling=4,
     ) -> Tensor:
-        """
-        Compute the flow matching loss.
+        """Compute the flow matching loss.
 
         Args:
             x_target (Tensor): The target atom types. shape: [n_target_atoms]
@@ -407,8 +412,7 @@ class NEAT(LightningModule):
     def sample_timesteps_uniform(
         self, num_samples: int, device: torch.device
     ) -> Tensor:
-        """
-        Sample timesteps from a uniform distribution.
+        """Sample timesteps from a uniform distribution.
 
         Args:
             num_samples (int): The number of timesteps to sample.
@@ -422,8 +426,8 @@ class NEAT(LightningModule):
     def sample_timesteps_logit_normal(
         self, num_samples: int, device: torch.device, m: float = 0.8, s: float = 1.7
     ) -> Tensor:
-        """
-        Sample timesteps from a logit-normal distribution.
+        """Sample timesteps from a logit-normal distribution.
+
         Adapated from https://arxiv.org/pdf/2403.03206.pdf
 
         Args:
@@ -447,7 +451,7 @@ class NEAT(LightningModule):
         source_set_representation: Tensor,
         device: torch.device,
     ) -> Tensor:
-        """Method to compute the vector field of the flow matching network.
+        """Compute the vector field of the flow matching network.
 
         Args:
             x (Tensor): The atom types of the noisy atoms. shape: [n_atoms, 1]
@@ -537,8 +541,7 @@ class NEAT(LightningModule):
     def on_before_optimizer_step(
         self, optimizer: Optimizer, optimizer_idx: int = None
     ) -> None:
-        """
-        Compute the gradient norm before clipping.
+        """Compute the gradient norm before clipping.
 
         Args:
             optimizer (Optimizer): The optimizer to use.
@@ -563,6 +566,7 @@ class NEAT(LightningModule):
         )
 
     def shared_step(self, batch: Data, batch_idx: int) -> Tensor:
+        """Shared step for training and validation"""
         loss, loss_ce, loss_fm = self(batch)
 
         return loss, loss_ce, loss_fm
@@ -609,6 +613,7 @@ class NEAT(LightningModule):
         return loss
 
     def validation_step(self, batch: Data, batch_idx: int) -> Tensor:
+        """Validation step and logging"""
         loss, loss_ce, loss_fm = self.shared_step(batch, batch_idx)
 
         self.log(
@@ -650,17 +655,20 @@ class NEAT(LightningModule):
         time_step_spacing: str = "linear",
         integration_method: str = "euler_maruyama",
     ) -> tuple[Tensor, Tensor, Tensor]:
-        """
-        Generate a molecule using the flow matching network.
+        """Generate a molecule using the flow matching network.
 
         Args:
-            batch_size (int): The number of molecules to generate.
-            max_atoms (int): The maximum number of atoms to generate.
-            num_time_steps (int): The number of time steps to use for the flow matching.
-            device (torch.device): The device to use for computations.
+            batch_size (int): Number of molecules to generate.
+            max_atoms (int): Maximum number of atoms to generate.
+            num_time_steps (int): Number of time steps to use for the flow matching.
+            device (torch.device): Device to use for computations.
+            prefix_x (Tensor): Optional prefix atom types to condition the generation on.
+            prefix_pos (Tensor): Optional prefix positions to condition the generation on.
+            time_step_spacing (str): Spacing of the time steps. Options: 'linear', 'logarithmic', 'quadratic'.
+            integration_method (str): Integration method to use. Options: 'euler', 'euler_maruyama'.
 
         Returns:
-            tuple[Tensor, Tensor, Tensor]: The generated molecule, its positions, and the batch indices.
+            tuple[Tensor, Tensor, Tensor]: The atom types, their positions, and the batch indices of the generated molecules.
         """
         if prefix_x is not None and prefix_pos is not None:
             # (1) Initialize starting atom types with the provided prefix
@@ -835,15 +843,15 @@ class NEAT(LightningModule):
         time_step_spacing: str = "linear",
         integration_method: str = "euler_maruyama",
     ) -> Tensor:
-        """
-        Method to calculate the positions of the newly predicted atoms with flow matching.
+        """Calculate the positions of the newly predicted atoms with flow matching.
 
         Args:
-            x_next (Tensor): The atom types of the newly predicted atoms. shape: [n_atoms, 1]
-            source_set_representation (Tensor): The representation of the source sets. shape: [n_atoms, n_embd]
-            num_time_steps (int): The number of time steps to use for the flow matching.
-            device (torch.device): The device to use for computations.
-            integration_method (str): The integration method to use for the flow matching.
+            x_next (Tensor): Atom types of the newly predicted atoms. shape: [n_atoms, 1]
+            source_set_representation (Tensor):Representation of the source sets. shape: [n_atoms, n_embd]
+            num_time_steps (int): Number of time steps to use for the flow matching.
+            device (torch.device): Device to use for computations.
+            time_step_spacing (str): Spacing of the time steps. Options: 'linear', 'logarithmic', 'quadratic'.
+            integration_method (str): Integration method to use for the flow matching. Options: 'euler', 'euler_maruyama'.
 
         Returns:
             Tensor: The positions of the newly predicted atoms. shape: [n_atoms, 3]
@@ -915,7 +923,26 @@ class NEAT(LightningModule):
 
         return pos_next
 
-    def compute_euler_maruyama_step(self, pos_next, velocity, time_step, dt, tau=0.3):
+    def compute_euler_maruyama_step(
+        self,
+        pos_next: Tensor,
+        velocity: Tensor,
+        time_step: Tensor,
+        dt: float,
+        tau: float = 0.3,
+    ) -> Tensor:
+        """Compute a single Euler-Maruyama integration step.
+
+        Args:
+            pos_next (Tensor): Current positions. shape: [n_atoms, 3]
+            velocity (Tensor): Velocity field at current positions. shape: [n_atoms, 3]
+            time_step (Tensor): Current time step. shape: [n_atoms]
+            dt (float): Time step size.
+            tau (float): Noise scale parameter.
+
+        Returns:
+            Tensor: Position update. shape: [n_atoms, 3]
+        """
         eps = torch.randn_like(pos_next)
         score = self.compute_score_from_velocity(velocity, pos_next, time_step)
         diff_coeff = self.diffusion_coefficient(time_step)
@@ -923,7 +950,22 @@ class NEAT(LightningModule):
         delta_pos = drift * dt + torch.sqrt(2.0 * diff_coeff * dt * tau) * eps
         return delta_pos
 
-    def compute_score_from_velocity(self, v_t, y_t, t):
+    def compute_score_from_velocity(
+        self,
+        v_t: Tensor,
+        y_t: Tensor,
+        t: Tensor,
+    ) -> Tensor:
+        """Compute the score function from the velocity field.
+
+        Args:
+            v_t (Tensor): Velocity field at time t. shape: [n_atoms, 3]
+            y_t (Tensor): Noisy positions at time t. shape: [n_atoms, 3]
+            t (Tensor): Current time step. shape: [n_atoms]
+
+        Returns:
+            Tensor: Score function at time t. shape: [n_atoms, 3]
+        """
         alpha_t, d_alpha_t = t, 1
         sigma_t, d_sigma_t = 1 - t, -1
         mean = y_t
@@ -932,8 +974,22 @@ class NEAT(LightningModule):
         score = (reverse_alpha_ratio * v_t - mean) / var
         return score
 
-    def diffusion_coefficient(self, t, epsilon=1e-3, w_cutoff=0.9):
-        # determine diffusion coefficient
+    def diffusion_coefficient(
+        self,
+        t: Tensor,
+        epsilon: float = 1e-3,
+        w_cutoff: float = 0.9,
+    ) -> Tensor:
+        """Compute the diffusion coefficient at time t.
+
+        Args:
+            t (Tensor): Current time step. shape: [n_atoms]
+            epsilon (float): Small constant to avoid division by zero.
+            w_cutoff (float): Cutoff value for the diffusion coefficient.
+
+        Returns:
+            Tensor: Diffusion coefficient at time t. shape: [n_atoms]
+        """
         w = (1.0 - t) / (t + epsilon)
         if t >= w_cutoff:
             w = torch.zeros_like(t)

@@ -1,6 +1,8 @@
-# https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/fce07d701a2d2340f3522df588832c2c0f7e044a/configs/datasets_config.py
-# https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/fce07d701a2d2340f3522df588832c2c0f7e044a/qm9/bond_analyze.py#L4
-# https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/fce07d701a2d2340f3522df588832c2c0f7e044a/qm9/analyze.py#L4
+"""Taken without modifications from
+https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/fce07d701a2d2340f3522df588832c2c0f7e044a/configs/datasets_config.py
+https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/fce07d701a2d2340f3522df588832c2c0f7e044a/qm9/bond_analyze.py#L4
+https://github.com/ehoogeboom/e3_diffusion_for_molecules/blob/fce07d701a2d2340f3522df588832c2c0f7e044a/qm9/analyze.py#L4
+"""
 
 import numpy as np
 import torch
@@ -583,7 +585,6 @@ bonds2 = {
     "P": {"O": 150, "S": 186},
     "S": {"P": 186},
 }
-
 
 bonds3 = {
     "C": {"C": 120, "N": 116, "O": 113},

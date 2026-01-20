@@ -1,5 +1,4 @@
-"""
-Taken as is from the SimpleFold repository:
+"""Taken without modifications from the SimpleFold repository:
 https://github.com/apple/ml-simplefold/blob/main/src/simplefold/model/torch/pos_embed.py
 """
 

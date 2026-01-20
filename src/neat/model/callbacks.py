@@ -7,15 +7,30 @@ from neat.utils.edm_metrics import edm_metrics
 
 
 class GenerationMonitor(Callback):
+    """Callback to monitor molecule generation during training.
+
+    Args:
+        num_samples: Number of molecules to generate for evaluation.
+        every_n_epochs: Frequency (in epochs) to perform generation and evaluation.
+        dataset: Dataset name, either "QM9" or "GEOM".
+    """
+
     def __init__(
-        self, num_samples: int = 10000, every_n_epochs: int = 50, dataset: str = "QM9"
+        self,
+        num_samples: int = 1000,
+        every_n_epochs: int = 50,
+        dataset: str = "QM9",
     ) -> None:
         super().__init__()
         self.num_samples = num_samples
         self.every_n_epochs = every_n_epochs
         self.dataset = dataset
 
-    def on_train_start(self, trainer: Trainer, pl_module: LightningModule):
+    def on_train_start(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+    ) -> None:
         pl_module.log(
             "val/validity",
             -torch.inf,
@@ -32,7 +47,9 @@ class GenerationMonitor(Callback):
         )
 
     def on_validation_epoch_end(
-        self, trainer: Trainer, pl_module: LightningModule
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
     ) -> None:
         if (
             trainer.current_epoch % self.every_n_epochs != 0
@@ -87,14 +104,33 @@ class GenerationMonitor(Callback):
             on_epoch=True,
         )
 
-    def compute_validity(self, mols):
+    def compute_validity(
+        self,
+        mols: list[Chem.Mol],
+    ) -> int:
+        """Compute the number of valid molecules in a list.
+
+        Args:
+            mols (list[Chem.Mol]): List of RDKit molecules.
+
+        Returns:
+            num_valid (int): Number of valid molecules.
+        """
         num_valid = 0
         for mol in mols:
             if mol is not None:
                 num_valid += 1
         return num_valid
 
-    def compute_uniqueness(self, mols):
+    def compute_uniqueness(self, mols: list[Chem.Mol]) -> int:
+        """Compute the number of unique molecules in a list.
+
+        Args:
+            mols (list[Chem.Mol]): List of RDKit molecules.
+
+        Returns:
+            num_unique (int): Number of unique molecules.
+        """
         unique_smiles = set()
         for mol in mols:
             if mol is not None:

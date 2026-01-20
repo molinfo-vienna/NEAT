@@ -1,27 +1,42 @@
 import argparse
 import ast
 import os
+from datetime import datetime
 
-from lightning import seed_everything
-from rdkit import Chem
 import torch
 import torch_geometric
 import yaml
+from lightning import seed_everything
+from rdkit import Chem
 from torch_geometric.data import Batch
 
-from neat.model import NEAT
 from neat.dataset import DataModule, GEOMDataSet
+from neat.model import NEAT
+
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 torch.set_float32_matmul_precision("medium")
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 torch_geometric.seed_everything(0)
 seed_everything(0)
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+ROOT = os.getcwd()
 
 
-def mol_to_tensor(mol, vocabulary):
+def mol_to_tensor(
+    mol: Chem.Mol, vocabulary: dict[int, int]
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Convert RDKit Mol to PyTorch tensors for atom types and positions.
+
+    Args:
+        mol (Chem.Mol): RDKit molecule.
+        vocabulary (dict[int, int]): Mapping from atomic numbers to vocabulary indices.
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor]: Atom types tensor and positions tensor.
+    """
     n = mol.GetNumAtoms()
 
     x = torch.tensor(
@@ -42,13 +57,26 @@ def mol_to_tensor(mol, vocabulary):
     return x, pos
 
 
-def read_sdf_dummy_indices(sdf_path, vocab):
+def read_sdf_dummy_indices(
+    sdf_path: str, vocabulary: dict[int, int]
+) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], list[list[int]]]:
+    """Read molecules and dummy atom indices from an SDF file.
+
+    Args:
+        sdf_path (str): Path to the SDF file.
+        vocabulary (dict[int, int]): Mapping from atomic numbers to vocabulary indices.
+
+    Returns:
+        tuple[list[tuple[torch.Tensor, torch.Tensor]], list[list[int]]]:
+            - List of tuples containing atom types and positions tensors for each molecule.
+            - List of lists containing dummy atom indices for each molecule.
+    """
     suppl = Chem.SDMolSupplier(sdf_path, removeHs=False)
     mols, dummy_indices = [], []
     for mol in suppl:
         if mol is None:
             continue
-        mols.append(mol_to_tensor(mol, vocab))
+        mols.append(mol_to_tensor(mol, vocabulary))
         if mol.HasProp("R_group_indices"):
             idxs = mol.GetProp("R_group_indices")
             idxs = ast.literal_eval(idxs)
@@ -59,19 +87,28 @@ def read_sdf_dummy_indices(sdf_path, vocab):
 
 
 def generate(args: argparse.Namespace) -> None:
-    ROOT = os.getcwd()
+    """Complete prefixes using the NEAT model.
+
+    Args:
+        args (argparse.Namespace): Command line arguments.
+
+    Returns:
+        None
+    """
+    # Load config file
     if args.config_file is not None:
-        CONFIG_FILE_PATH = args.config_file
-        print(f"Using config file: {CONFIG_FILE_PATH}")
+        config_file_path = args.config_file
+        print(f"Using config file: {config_file_path}")
     else:
-        CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_generation.yaml")
-        print(f"Using default config file: {CONFIG_FILE_PATH}")
+        config_file_path = os.path.join(ROOT, "scripts", "config_generation.yaml")
+        print(f"Using default config file: {config_file_path}")
 
     params = yaml.load(
-        open(CONFIG_FILE_PATH, "r"),
+        open(config_file_path, "r"),
         Loader=yaml.FullLoader,
     )
 
+    # Load model
     checkpoints_dir = os.path.join(params["checkpoints_path"], "checkpoints")
     pt_files = [
         f
@@ -81,22 +118,23 @@ def generate(args: argparse.Namespace) -> None:
     if not pt_files:
         raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")
 
+    checkpoint_path = os.path.join(checkpoints_dir, pt_files[0])
+    print(f"Using checkpoint file: {checkpoint_path}")
+
+    MODEL = NEAT
+    model = MODEL.load_from_checkpoint(checkpoint_path, map_location=DEVICE)
+
     # Load preprocessed training data for computing novelty
-    DATA_ROOT = os.path.join(ROOT, "data")
-    datamodule = DataModule(DATA_ROOT, data_set=params["data_set"])
+    data_root = os.path.join(ROOT, "data")
+    datamodule = DataModule(data_root, data_set=params["data_set"])
     datamodule.setup()
 
     # Load prefix molecules from file
     prefix_path = os.path.join(os.getcwd(), "data", "GEOM", "prefixes.sdf")
-    vocab = GEOMDataSet.VOCABULARY
-    mols, dummy_idxs = read_sdf_dummy_indices(prefix_path, vocab)
+    vocabulary = GEOMDataSet.VOCABULARY
+    mols, dummy_idxs = read_sdf_dummy_indices(prefix_path, vocabulary)
 
-    CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
-    print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
-
-    MODEL = NEAT
-    model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
-
+    # Set up batching
     num_molecules = params["num_molecules"]
     batch_size = params["batch_size"]
     num_batches = (num_molecules + batch_size - 1) // batch_size
@@ -107,7 +145,10 @@ def generate(args: argparse.Namespace) -> None:
             num_molecules % batch_size
         ]
 
+    # Generate molecules for each prefix
     for mol_index, ((x, pos), dummy_idx) in enumerate(zip(mols, dummy_idxs)):
+
+        prefix_start_time = datetime.now()
 
         generated_batches = []
         for batch_idx in range(num_batches):
@@ -121,7 +162,6 @@ def generate(args: argparse.Namespace) -> None:
                     mask[dummy_idx] = False
                 prefix_x = x[mask]
                 prefix_pos = pos[mask]
-                # prefix_pos -= prefix_pos.mean(dim=0, keepdim=True)
                 generated_batch = model.generate(
                     batch_size=num_mols_batch,
                     max_atoms=params["max_atoms"],
@@ -139,8 +179,15 @@ def generate(args: argparse.Namespace) -> None:
             os.makedirs(out_dir)
         torch.save(generated_mols, os.path.join(out_dir, "generated_mols.pt"))
 
+        prefix_end_time = datetime.now()
+        print(
+            f"Generation time for prefix {mol_index}: {prefix_end_time - prefix_start_time}"
+        )
 
-def parseArgs() -> argparse.Namespace:
+
+if __name__ == "__main__":
+    start_time = datetime.now()
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -151,8 +198,9 @@ def parseArgs() -> argparse.Namespace:
         help="Config file for generation.",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
 
+    generate(args)
 
-if __name__ == "__main__":
-    generate(parseArgs())
+    end_time = datetime.now()
+    print(f"Total generation time: {end_time - start_time}")

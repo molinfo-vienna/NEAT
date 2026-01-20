@@ -1,13 +1,11 @@
-"""
-Taken from
+"""Taken from:
 https://github.com/LTH14/mar/blob/fe470ac24afbee924668d8c5c83e9fec60af3a73/models/diffloss.py
-with modifications following
+with modifications following:
 https://github.com/aspuru-guzik-group/quetzal/blob/main/simple_mlp.py
 """
 
 import numpy as np
 import torch
-import torch.nn.functional as F
 from torch import nn
 
 

@@ -2,13 +2,15 @@ import logging
 import os
 
 import torch
-from rdkit.Chem import Mol, rdDetermineBonds, rdmolfiles, MolToSmiles
+from rdkit.Chem import Mol, MolToSmiles, rdDetermineBonds, rdmolfiles
 from tqdm import tqdm
 
 
 class MoleculeBuilder:
-    """
-    Builds RDKit molecules from tensors.
+    """Build RDKit molecules from tensors.
+
+    Args:
+        vocab (str): The vocabulary to use. Options are "QM9" and "GEOM".
     """
 
     def __init__(self, vocab="QM9") -> None:
@@ -46,10 +48,11 @@ class MoleculeBuilder:
     def load_tensor_from_file(
         self, files_path: str
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Loads tensors from a file.
+        """Load atom types, positions, and batch indices from a generated_mols.pt file.
+
         Args:
-            files_path (str): The path to the file.
+            files_path (str): The path to the generated_mols.pt file.
+
         Returns:
             tuple[torch.Tensor, torch.Tensor, torch.Tensor]: A tuple containing the atom types, positions, and batch indices.
         """
@@ -63,11 +66,12 @@ class MoleculeBuilder:
         return generated_mols.x, generated_mols.pos, generated_mols.batch
 
     def create_xyz_block(self, x: torch.Tensor, pos: torch.Tensor) -> str:
-        """
-        Creates an XYZ block from a tensor of atom types and positions.
+        """Create an XYZ block from a tensor of atom types and positions.
+
         Args:
             x (torch.Tensor): A tensor of shape (n_atoms,).
             pos (torch.Tensor): A tensor of shape (n_atoms, 3).
+
         Returns:
             str: An XYZ block.
         """
@@ -92,12 +96,13 @@ class MoleculeBuilder:
         progress_bar: bool = False,
         break_after_k_mols: int = None,
     ) -> list[Mol]:
-        """
-        Generates RDKit molecules from tensors of atom types and positions.
+        """Generate RDKit molecules from tensors of atom types and positions.
+
         Args:
             x (torch.Tensor): A tensor of shape (n_atoms,).
             pos (torch.Tensor): A tensor of shape (n_atoms, 3).
             batch (torch.Tensor): A tensor of shape (n_atoms,).
+
         Returns:
             list[Mol]: A list of RDKit molecules.
         """
@@ -140,15 +145,17 @@ class MoleculeBuilder:
         pos: torch.Tensor,
         batch: torch.Tensor,
         progress_bar: bool = False,
-    ) -> list[Mol]:
-        """
-        Generates RDKit molecules from tensors of atom types and positions.
+    ) -> list[str]:
+        """Generate SMILES strings from tensors of atom types and positions.
+
         Args:
             x (torch.Tensor): A tensor of shape (n_atoms,).
             pos (torch.Tensor): A tensor of shape (n_atoms, 3).
             batch (torch.Tensor): A tensor of shape (n_atoms,).
+            progress_bar (bool): Whether to show a progress bar.
+
         Returns:
-            list[Mol]: A list of RDKit molecules.
+            list[str]: A list of SMILES strings.
         """
         smiles = []
         unique_batches = batch.unique().tolist()

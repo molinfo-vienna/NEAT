@@ -9,29 +9,39 @@ from lightning.pytorch.callbacks import LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 
 from neat.dataset import DataModule
-from neat.model import GenerationMonitor, NEAT
+from neat.model import NEAT, GenerationMonitor
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 torch.set_float32_matmul_precision("medium")
-torch_geometric.seed_everything(42)
-seed_everything(42)
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
+torch_geometric.seed_everything(42)
+seed_everything(42)
+
+ROOT = os.getcwd()
 
 
-def training(args: argparse.Namespace) -> None:
-    ROOT = os.getcwd()
+def train(args: argparse.Namespace) -> None:
+    """Train NEAT model.
+
+    Args:
+        args (argparse.Namespace): Command line arguments.
+
+    Returns:
+        None
+    """
+
     if args.config_file is not None:
-        CONFIG_FILE_PATH = args.config_file
-        print(f"Using config file: {CONFIG_FILE_PATH}")
+        config_file_path = args.config_file
+        print(f"Using config file: {config_file_path}")
     else:
-        CONFIG_FILE_PATH = os.path.join(ROOT, "scripts", "config_training.yaml")
-        print(f"Using default config file: {CONFIG_FILE_PATH}")
+        config_file_path = os.path.join(ROOT, "scripts", "config_training.yaml")
+        print(f"Using default config file: {config_file_path}")
 
     MODEL = NEAT
     params = yaml.load(
-        open(CONFIG_FILE_PATH, "r"),
+        open(config_file_path, "r"),
         Loader=yaml.FullLoader,
     )
 
@@ -47,9 +57,6 @@ def training(args: argparse.Namespace) -> None:
     accumulate_grad_batches = params.pop("accumulate_grad_batches")
     params["vocab_size"] = datamodule.vocab_size
 
-    # ------- Model initialization -----------------------------
-
-    # Initialize a new model instance...
     model = MODEL(**params)
 
     tb_logger = TensorBoardLogger(
@@ -57,7 +64,7 @@ def training(args: argparse.Namespace) -> None:
         name=f"{MODEL.__name__}",
         default_hp_metric=False,
     )
-    # Define the first ModelCheckpoint for validation loss
+
     checkpoint_val_loss = ModelCheckpoint(
         monitor="val/val_loss",
         mode="min",
@@ -66,7 +73,6 @@ def training(args: argparse.Namespace) -> None:
         every_n_epochs=10,
     )
 
-    # Define the second ModelCheckpoint for molecular validity
     generate_every_n_epochs = 20
     checkpoint_validity = ModelCheckpoint(
         monitor="val/validity",
@@ -75,6 +81,7 @@ def training(args: argparse.Namespace) -> None:
         save_top_k=1,
         every_n_epochs=generate_every_n_epochs,
     )
+
     callbacks = [
         GenerationMonitor(
             num_samples=1000,
@@ -85,6 +92,7 @@ def training(args: argparse.Namespace) -> None:
         checkpoint_validity,
         LearningRateMonitor(logging_interval="epoch"),
     ]
+
     trainer = Trainer(
         devices=[0],
         max_epochs=params["max_epochs"],
@@ -97,10 +105,11 @@ def training(args: argparse.Namespace) -> None:
         precision="bf16-mixed",
     )
 
-    trainer.fit(model=model, datamodule=datamodule)  # For new model training
+    trainer.fit(model=model, datamodule=datamodule)
 
 
-def parseArgs() -> argparse.Namespace:
+if __name__ == "__main__":
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -111,8 +120,6 @@ def parseArgs() -> argparse.Namespace:
         help="Config file for training.",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
 
-
-if __name__ == "__main__":
-    training(parseArgs())
+    train(args)

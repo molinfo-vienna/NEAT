@@ -8,12 +8,27 @@ from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
 
 from .augmentation import RandomRotationAugmentation
-from .dataset_qm9 import QM9DataSet
 from .dataset_geom import GEOMDataSet
+from .dataset_qm9 import QM9DataSet
 from .splitting import SourceTargetSplitter
 
 
-def batch_transform(batch, source_target_split, noise_std):
+def batch_transform(batch: Batch, source_target_split: str, noise_std: float) -> Batch:
+    """Transform a batch of graphs by:
+
+        1.applying random rotation augmentation,
+        2. creating source-target splits,
+        3. initializing stop tokens, and
+        4. coupling positions in the target set with random positions.
+
+    Args:
+        batch (Batch): Batch of graphs.
+        source_target_split (str): Source-target split mode.
+        noise_std (float): Standard deviation of the initial Gaussian noise in the flow matching process.
+
+    Returns:
+        Batch: Transformed batch of graphs.
+    """
     # (1) Apply random rotation augmentation
     rotation_augmentation = RandomRotationAugmentation()
     batch.pos = rotation_augmentation.rotate_graphs_randomly(batch.pos, batch.batch)
@@ -52,23 +67,24 @@ def batch_transform(batch, source_target_split, noise_std):
     return batch
 
 
-def custom_collate_fn(batch, source_target_split, noise_std):
+def custom_collate_fn(batch: list, source_target_split: str, noise_std: float) -> Batch:
     batch = Batch.from_data_list(batch)
     return batch_transform(batch, source_target_split, noise_std)
 
 
 class DataModule(LightningDataModule):
-    """
-    DataModule for loading and transforming the data for the MolGen model.
+    """DataModule for loading and transforming the data for the NEAT model.
 
     Args:
         training_data_dir (str): Directory containing the training data.
+        data_set (str): Dataset to use ("QM9" or "GEOM").
         batch_size (int): Batch size for the data loader.
         source_target_split (str): Source-target split mode.
+        noise_std (float): Standard deviation of the initial Gaussian noise in the flow matching process
         num_workers (int): Number of workers for the data loader.
 
     Returns:
-        DataModule for loading and transforming the data for the MolGen model.
+        DataModule for loading and transforming the data for the NEAT model.
     """
 
     def __init__(

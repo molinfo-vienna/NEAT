@@ -1,5 +1,4 @@
-"""
-Taken and modified from the nanoGPT repository:
+"""Taken and modified from the nanoGPT repository:
 https://github.com/karpathy/nanoGPT/blob/master/model.py
 """
 
@@ -10,6 +9,19 @@ import torch.nn as nn
 
 
 class MaskedBidirectionalAttention(nn.Module):
+    """Masked Bidirectional Self-Attention module.
+
+    Args:
+        n_embd (int): Embedding dimension.
+        n_head (int): Number of attention heads.
+        dropout (float): Dropout rate.
+        bias (bool): Whether to include bias terms in linear layers.
+        pos_embedder (nn.Module, optional): Positional embedding module. Default is None.
+
+    Returns:
+        nn.Module: A Masked Bidirectional Attention module.
+    """
+
     def __init__(
         self,
         n_embd: int,
@@ -17,7 +29,7 @@ class MaskedBidirectionalAttention(nn.Module):
         dropout: float,
         bias: bool,
         pos_embedder: Optional[nn.Module] = None,
-    ):
+    ) -> None:
         super().__init__()
         assert n_embd % n_head == 0
         # key, query, value projections for all heads, but in a batch
@@ -32,7 +44,12 @@ class MaskedBidirectionalAttention(nn.Module):
         self.dropout = dropout
         self.pos_embedder = pos_embedder
 
-    def forward(self, x, attn_mask=None, pos=None):
+    def forward(
+        self,
+        x: torch.Tensor,
+        attn_mask: Optional[torch.Tensor] = None,
+        pos: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         B, T, C = (
             x.size()
         )  # batch size, sequence length, embedding dimensionality (n_embd)
@@ -71,14 +88,30 @@ class MaskedBidirectionalAttention(nn.Module):
 
 
 class MLP(nn.Module):
-    def __init__(self, n_embd, dropout, bias):
+    """A simple feed-forward neural network (MLP) used in transformer blocks.
+
+    Args:
+        n_embd (int): Number of embedding dimensions.
+        dropout (float): Dropout rate.
+        bias (bool): Whether to use bias in the layers.
+
+    Returns:
+        nn.Module: An MLP module.
+    """
+
+    def __init__(
+        self,
+        n_embd: int,
+        dropout: float,
+        bias: bool,
+    ) -> None:
         super().__init__()
         self.c_fc = nn.Linear(n_embd, 4 * n_embd, bias=bias)
         self.gelu = nn.GELU()
         self.c_proj = nn.Linear(4 * n_embd, n_embd, bias=bias)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.c_fc(x)
         x = self.gelu(x)
         x = self.c_proj(x)
@@ -87,14 +120,17 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    """
-    A transformer block with masked bidirectional attention.
+    """A transformer block with masked bidirectional attention.
+
     Args:
-        n_embd (int): The number of embedding dimensions.
-        n_head (int): The number of attention heads.
-        dropout (float): The dropout rate.
+        n_embd (int): Number of embedding dimensions.
+        n_head (int): Number of attention heads.
+        dropout (float): Dropout rate.
         bias (bool): Whether to use bias in the layers.
-        pos_embedder (Optional[nn.Module]): The positional embedder to use. Relates to rope embeddings.
+        pos_embedder (Optional[nn.Module]): Positional embedder to use. Relates to rope embeddings.
+
+    Returns:
+        nn.Module: A transformer block module.
     """
 
     def __init__(
@@ -104,7 +140,7 @@ class Block(nn.Module):
         dropout: float,
         bias: bool,
         pos_embedder: Optional[nn.Module] = None,
-    ):
+    ) -> None:
         super().__init__()
         self.ln_1 = nn.LayerNorm(n_embd, bias=False)
         self.attn = MaskedBidirectionalAttention(
@@ -118,7 +154,7 @@ class Block(nn.Module):
         x: torch.Tensor,
         attn_mask: torch.Tensor,
         pos: Optional[torch.Tensor] = None,
-    ):
+    ) -> torch.Tensor:
         x = x + self.attn(self.ln_1(x), attn_mask=attn_mask, pos=pos)
         x = x + self.mlp(self.ln_2(x))
         return x

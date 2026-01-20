@@ -5,10 +5,9 @@ import subprocess
 
 import networkx as nx
 import torch
-from rdkit import RDLogger
+from rdkit import Chem, RDLogger
 from torch_geometric.data import Data, InMemoryDataset
 from tqdm import tqdm
-from rdkit import Chem
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -32,9 +31,11 @@ class GEOMDataSet(InMemoryDataset):
             an torch_geometric.data.Data object and returns a boolean value,
             indicating whether the data object should be included in the final
             dataset. (default: :obj:`None`)
+        split (str): One of 'train', 'val', or 'test' to specify the dataset split.
+        num_conformers (int): Number of conformers to use per molecule.
     """
 
-    DRUGS_URL = "https://bits.csb.pitt.edu/files/geom_raw/"
+    GEOM_URL = "https://bits.csb.pitt.edu/files/geom_raw"
     VOCABULARY = {
         1: 1,
         5: 2,
@@ -63,9 +64,9 @@ class GEOMDataSet(InMemoryDataset):
         split="train",
         num_conformers=5,
     ):
+        super().__init__(root, transform, pre_transform, pre_filter)
         self.root = root
         self.num_conformers = num_conformers
-        super().__init__(root, transform, pre_transform, pre_filter)
         if split == "train":
             self.load(self.processed_paths[0])
         elif split == "val":
@@ -76,6 +77,7 @@ class GEOMDataSet(InMemoryDataset):
             raise ValueError(f"Unknown split: {split}")
 
     def download(self):
+        """Download the GEOM dataset if it doesn't exist already."""
         raw_path = os.path.join(self.root, "raw")
         os.makedirs(raw_path, exist_ok=True)
 
@@ -92,7 +94,7 @@ class GEOMDataSet(InMemoryDataset):
                         "index.html*",
                         "-P",
                         raw_path,
-                        os.path.join(self.DRUGS_URL, raw_file),
+                        os.path.join(self.GEOM_URL, raw_file),
                     ],
                     check=True,
                 )
@@ -108,6 +110,7 @@ class GEOMDataSet(InMemoryDataset):
         return ["train_data.pt", "val_data.pt", "test_data.pt"]
 
     def process(self):
+        """Process the raw GEOM dataset files."""
         for i, raw_path in enumerate(self.raw_paths):
             raw_path = self.raw_paths[i]
             with open(raw_path, "rb") as f:
@@ -136,11 +139,18 @@ class GEOMDataSet(InMemoryDataset):
 
             self.save(data_list, self.processed_paths[i])
 
-    def largest_fragment_by_size(self, mol, use_heavy_atoms=True, sanitize_frags=True):
-        """
-        Returns the largest fragment of `mol` by atom count.
-        - use_heavy_atoms: count non-hydrogen atoms if True, else all atoms.
-        - sanitize_frags: sanitize the fragment molecules (usually True).
+    def largest_fragment_by_size(
+        self, mol: Chem.Mol, use_heavy_atoms: bool = True, sanitize_frags: bool = True
+    ):
+        """Return the largest fragment of a molecule by number of atoms.
+
+        Args:
+            mol: RDKit molecule.
+            use_heavy_atoms: count only non-hydrogen atoms if True, else count all atoms.
+            sanitize_frags: sanitize the fragment molecules.
+
+        Returns:
+            The largest fragment as an RDKit molecule.
         """
         frags = Chem.GetMolFrags(mol, asMols=True, sanitizeFrags=sanitize_frags)
         if not frags:
@@ -152,7 +162,20 @@ class GEOMDataSet(InMemoryDataset):
         )
         return max(frags, key=key)
 
-    def process_molecule(self, smiles, conformers, vocabulary, num_conformers=5):
+    def process_molecule(
+        self, smiles: str, conformers: list, vocabulary: dict, num_conformers: int = 5
+    ) -> list[Data]:
+        """Process a single molecule and its conformers into a list of Data objects.
+
+        Args:
+            smiles: SMILES string of the molecule.
+            conformers: List of RDKit molecule conformers.
+            vocabulary: Mapping from atomic numbers to indices.
+            num_conformers: Number of conformers to process.
+
+        Returns:
+            List of Data objects for the conformers of the molecule.
+        """
         try:
             conformer_list = []
             for mol in conformers:

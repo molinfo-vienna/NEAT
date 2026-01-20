@@ -1,27 +1,34 @@
 import argparse
 import os
+from datetime import datetime
 
 import torch
 import torch_geometric
 import yaml
-from datetime import datetime
 from lightning import seed_everything
 from torch_geometric.data import Batch
 
 from neat.model import NEAT
-from neat.model.molecule_builder import MoleculeBuilder
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 torch.set_float32_matmul_precision("medium")
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+ROOT = os.getcwd()
+
 
 def generate(args: argparse.Namespace) -> None:
-    ROOT = os.getcwd()
+    """Generate molecules using the NEAT model.
+
+    Args:
+        args (argparse.Namespace): Command line arguments.
+
+    Returns:
+        None
+    """
     if args.config_file is not None:
         CONFIG_FILE_PATH = args.config_file
         print(f"Using config file: {CONFIG_FILE_PATH}")
@@ -43,11 +50,11 @@ def generate(args: argparse.Namespace) -> None:
     if not pt_files:
         raise FileNotFoundError(f"No .ckpt files found in {checkpoints_dir}")
 
-    CHECKPOINTS_PATH = os.path.join(checkpoints_dir, pt_files[0])
-    print(f"Using checkpoint file: {CHECKPOINTS_PATH}")
+    checkpoints_path = os.path.join(checkpoints_dir, pt_files[0])
+    print(f"Using checkpoint file: {checkpoints_path}")
 
     MODEL = NEAT
-    model = MODEL.load_from_checkpoint(CHECKPOINTS_PATH, map_location=device)
+    model = MODEL.load_from_checkpoint(checkpoints_path, map_location=DEVICE)
 
     seeds = [i for i in range(params.get("num_runs", 1))]
 
@@ -91,7 +98,9 @@ def generate(args: argparse.Namespace) -> None:
         print(f"Generation time for seed {seed}: {seed_end_time - seed_start_time}")
 
 
-def parseArgs() -> argparse.Namespace:
+if __name__ == "__main__":
+    start_time = datetime.now()
+
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
@@ -102,11 +111,9 @@ def parseArgs() -> argparse.Namespace:
         help="Config file for generation.",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
 
+    generate(args)
 
-if __name__ == "__main__":
-    start_time = datetime.now()
-    generate(parseArgs())
     end_time = datetime.now()
     print(f"Total generation time: {end_time - start_time}")
