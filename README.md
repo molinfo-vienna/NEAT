@@ -41,6 +41,7 @@ For more info, visit https://pytorch.org/get-started/locally.
 pip install .
 ```
 
+5. Get trained model weights from [figshare](https://figshare.com/s/8291194090f2133fac63). Unzip and place into a `logs/NEAT` folder for using the generation script without modifications to the `config_generation.yaml` configuration file.
 
 # Usage
 
