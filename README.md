@@ -45,13 +45,9 @@ pip install .
 
 # Usage
 
-## Load trained model
-
-TODO
-
 ## Generate molecules
 
-1. Open config_generation.yaml and set the chosen options:
+1. Open `config_generation.yaml` and set the chosen options:
 
 - checkpoints_path: model checkpoints folder (the best-validation-loss checkpoints will be used per default)
 - output_path: output folder
@@ -72,14 +68,14 @@ python scripts/generation.py
 
 3. What you get:
 
-- Generated molecules stored in a generated_mols.pt file.
+- Generated molecules stored in a `generated_mols.pt` file.
 
 
 ## Complete prefixes
 
-1. Generate prefixes from the GEOM training dataset with the prefixes_from_geom.py script or generate your own prefixes.
+1. Generate prefixes from the GEOM-Drugs training dataset with the `prefixes_from_geom.py` script or generate your own prefixes.
 
-2. Open config_generation.yaml and set the chosen options:
+2. Open `config_generation.yaml` and set the chosen options:
 
 - checkpoints_path: model checkpoints folder. Per default, the best-validation-loss checkpoints will be used.
 - output_path: output folder
@@ -100,12 +96,12 @@ python scripts/generation_prefix.py
 
 4. What you get:
 
-- Completed molecules stored in a generated_mols.pt file for each of the prefixes (100 prefixes if using the default GEOM prefixes).
+- Completed molecules stored in a `generated_mols.pt` file for each of the prefixes (100 prefixes if using the default GEOM prefixes).
 
 
 ## Evaluate generated molecules or completed prefixes
 
-1. Open config_evaluation.yaml and set the chosen options:
+1. Open `config_evaluation.yaml` and set the chosen options:
 
 - data_path: folder of the generated_mols.pt file obtained either from unconditional molecular generation or prefix completion. Example: "output/version_1/unconditional" or "output/version_1/prefix"
 - data_set: "QM9" or "GEOM"
@@ -118,14 +114,14 @@ python scripts/evaluation.py
 
 3. What you get:
 
-- Metrics per seed
-- Average across all seeds with 95% confidence intervals
-- 2D and 3D visualizations of the first 100 molecules for each seeds
+- Metrics per seed.
+- Average across all seeds with 95% confidence intervals.
+- 2D and 3D visualizations of the first 100 molecules for each seeds.
 
 
 ## Train model
 
-1. Open config_training.yaml and set the chosen options:
+1. Open `config_training.yaml` and set the chosen options:
 
 - accumulate_grad_batches: number of steps before gradient accumulation
 - batch_size
@@ -158,9 +154,13 @@ This script supports training on both the QM9 and the GEOM-Drugs dataset. Execut
 
 3. What you get:
 
-- Model checkpoints (best validation loss and best validation validity) saved in a logs/NEAT/version_X/checkpoints folder, along with a copy of the configuration file. The version_X folder's path should be used when loading the model's checkpoints for generating molecules or completing prefixes.
+- Model checkpoints (best validation loss and best validation validity) saved in a `logs/NEAT/version_X/checkpoints` folder, along with a copy of the configuration file. The version_X folder's path should be used when loading the model's checkpoints for generating molecules or completing prefixes.
 
 
 # License
 
 This project is licensed under the MIT license.
+
+# Precomputed prefixes
+
+We recommend generating the prefixes from the GEOM-Drugs training set by executing the prefixes_from_geom.py script. This will ensure all files are placed in the necessary folders to smoothly reproduce our results. However, we also provide a copy of the SD file of all prefixes in the `prefixes` folder.
