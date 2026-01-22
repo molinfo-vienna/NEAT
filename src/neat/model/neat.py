@@ -375,6 +375,10 @@ class NEAT(LightningModule):
             ) + 0.02 * self.sample_timesteps_uniform(
                 n_paths * resampling, device=device
             )  # [n_paths * k]
+        else:
+            raise ValueError(
+                f"Invalid time_step_sampling: {self.hparams.time_step_sampling}. Must be 'uniform' or 'logit_normal'."
+            )
 
         # (3) Since we sample k time steps per path, we need to expand all other tensors accordingly
         x_target = torch.cat([x_target for _ in range(resampling)], dim=0)
@@ -920,6 +924,10 @@ class NEAT(LightningModule):
                     pos_next, velocity, time_step, dt
                 )
                 pos_next += delta_pos
+        else:
+            raise ValueError(
+                f"Invalid integration_method: {integration_method}. Must be 'euler' or 'euler_maruyama'."
+            )
 
         return pos_next
 
