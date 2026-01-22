@@ -188,7 +188,7 @@ def generate_3d_coords_from_patterns(patterns, num_examples=100):
         rw = Chem.RWMol(mol)
         for atom in rw.GetAtoms():
             if atom.GetAtomicNum() == 0:
-                newA = Chem.Atom(1)  # hydrogen
+                newA = Chem.Atom(1)
                 newA.SetFormalCharge(atom.GetFormalCharge())
                 rw.ReplaceAtom(atom.GetIdx(), newA)
 
@@ -226,23 +226,24 @@ if __name__ == "__main__":
 
     # (2) Mine ring patterns
     counts_per_pattern = mine_ring_patterns(smiles_list)
-    print("Pattern counts:")
-    for k, v in sorted(counts_per_pattern.items(), key=lambda kv: (-kv[1], kv[0])):
-        print(f"{k}: {v}")
+    # print("Pattern counts:")
+    # for k, v in sorted(counts_per_pattern.items(), key=lambda kv: (-kv[1], kv[0])):
+    #     print(f"{k}: {v}")
     patterns, vals = zip(
         *sorted(counts_per_pattern.items(), key=lambda kv: (-kv[1], kv[0]))
     )
+    print(f"Mined {len(patterns)} unique ring patterns.")
 
     # (3) Generate 3D coords for top 100 patterns
     mols3d, dummy_idx = generate_3d_coords_from_patterns(patterns)
-    print(f"Generated {len(mols3d)} 3D molecules with explicit Hs.")
-    print("Dummy indices:", dummy_idx)
+    print(f"Generated 3D coordinates for top {len(mols3d)} patterns.")
 
     # (4) Write 3D coords to SDF
     w = SDWriter(os.path.join(ROOT, "prefixes", "prefixes.sdf"))
     for m in mols3d:
         w.write(m)
     w.close()
+    print(f"Wrote prefixes to {os.path.join(ROOT, 'prefixes', 'prefixes.sdf')}.")
 
     # (5) Convert to 2D for visualization
     mols2d = []
@@ -252,7 +253,7 @@ if __name__ == "__main__":
         else:
             rw = Chem.RWMol(mol)
             for idx in dummy_indices:
-                newA = Chem.Atom(0)  # hydrogen
+                newA = Chem.Atom(0)
                 rw.ReplaceAtom(idx, newA)
 
             mol = rw.GetMol()
