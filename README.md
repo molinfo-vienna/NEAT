@@ -16,7 +16,7 @@ Welcome to the NEAT repository. NEAT is an autoregressive model that builds 3D m
 1. Clone the repository and cd into the repository's root:
 
 ```bash
-git clone LINK
+git clone https://github.com/molinfo-vienna/NEAT.git
 cd NEAT
 ```
 
