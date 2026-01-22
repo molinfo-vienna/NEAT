@@ -150,6 +150,9 @@ def evaluate(args: argparse.Namespace) -> None:
             mols = builder.generate_rdkit_molecules(
                 x, pos, batch, break_after_k_mols=NUM_MOLECULES_PLOTTED
             )
+            for mol in mols:
+                if mol is not None:
+                    rdDepictor.Compute2DCoords(mol)  # Optimize 2D coordinates for better visualization 
             img = Draw.MolsToGridImage(
                 mols,
                 molsPerRow=NUM_MOLECULES_PER_ROW,
@@ -162,8 +165,8 @@ def evaluate(args: argparse.Namespace) -> None:
                 if mol is None:
                     mols_2d.append(None)
                 else:
-                    rdDepictor.Compute2DCoords(mol)
                     mol = AllChem.RemoveHs(mol)
+                    rdDepictor.Compute2DCoords(mol)
                     mols_2d.append(mol)
 
             img = Draw.MolsToGridImage(mols_2d, molsPerRow=5, subImgSize=(400, 400))
@@ -194,7 +197,6 @@ def evaluate(args: argparse.Namespace) -> None:
                 )
 
             view.zoomTo()
-            view.show()
 
             with open(
                 os.path.join(subdata_path, "generated_molecules_3d.html"), "w"
