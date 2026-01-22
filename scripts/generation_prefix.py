@@ -130,7 +130,7 @@ def generate(args: argparse.Namespace) -> None:
     datamodule.setup()
 
     # Load prefix molecules from file
-    prefix_path = os.path.join(os.getcwd(), "data", "GEOM", "prefixes.sdf")
+    prefix_path = os.path.join(os.getcwd(), "prefixes", "prefixes.sdf")
     vocabulary = GEOMDataSet.VOCABULARY
     mols, dummy_idxs = read_sdf_dummy_indices(prefix_path, vocabulary)
 

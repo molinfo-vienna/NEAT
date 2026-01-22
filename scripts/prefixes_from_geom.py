@@ -239,7 +239,7 @@ if __name__ == "__main__":
     print("Dummy indices:", dummy_idx)
 
     # (4) Write 3D coords to SDF
-    w = SDWriter(os.path.join(ROOT, "data", "GEOM", "prefixes.sdf"))
+    w = SDWriter(os.path.join(ROOT, "prefixes", "prefixes.sdf"))
     for m in mols3d:
         w.write(m)
     w.close()
@@ -267,7 +267,7 @@ if __name__ == "__main__":
         molsPerRow=5,
         subImgSize=(300, 300),
     )
-    img.save(os.path.join(ROOT, "data", "GEOM", "prefixes.png"))
+    img.save(os.path.join(ROOT, "prefixes", "prefixes.png"))
 
     end_time = datetime.now()
     print(f"Total time: {end_time - start_time}")

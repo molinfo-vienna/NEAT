@@ -73,20 +73,15 @@ python scripts/generation.py
 
 ## Complete prefixes
 
-1. Generate prefixes from the GEOM-Drugs training dataset with the `prefixes_from_geom.py` script or generate your own prefixes.
+1. The `prefixes` directory contains an SD file with all prefixes. Prefixes are UFF-optimized molecules with an <R_group_indices> property. The corresponding list of indices (indexing starts with 0) points to H-Atoms that will be removed. The resulting prefixes are used as starting points for 3D molecular generation. The provided file is used by default when running `generation_prefix.py`. To generate prefixes from the GEOM-Drugs training set yourself, run:
 
-2. Open `config_generation.yaml` and set the chosen options:
+```bash
+python scripts/prefixes_from_geom.py
+```
 
-- checkpoints_path: model checkpoints folder. Per default, the best-validation-loss checkpoints will be used.
-- output_path: output folder
-- data_set: "QM9" or "GEOM"
-- num_molecules: number of generated molecules
-- batch_size: batch size according to hardware (generating 1000 GEOM molecules requires approx. 12GB of VRAM on the GPU)
-- max_atoms: the maximum number of atoms per generated molecules
-- num_time_steps: number of flow matching integration time steps
-- num_runs: number of runs with different random seeds
-- time_step_spacing: method of time-step spacing ("linear", "logarithmic", or "quadratic")
-- integration_method: integration method to use for flow matching ("euler" or "euler-maruyama")
+You could equally modify this script to generate your own prefixes.
+
+2. Open `config_generation.yaml` and configure as described above in ***Generate molecules***.
 
 3. Run:
 
@@ -139,7 +134,7 @@ python scripts/evaluation.py
 - n_layer: number of transformer layers
 - n_layers_fm: number of layer in the flow matching head
 - noise_std: standard deviation of the initial Gaussian noise in the flow matching process
-- rope: boolean contrlling the use of rotary positional embeddings
+- rope: boolean controlling the use of rotary positional embeddings
 - time_step_resampling: number of resampled trajectories when computing flow-matching loss
 - time_step_sampling: distribution for time step sampling ("logit_normal" or "uniform")
 - weight_decay: weight decay parameter of the AdamW optimizer
@@ -161,6 +156,6 @@ This script supports training on both the QM9 and the GEOM-Drugs dataset. Execut
 
 This project is licensed under the MIT license.
 
-# Precomputed prefixes
 
-We recommend generating the prefixes from the GEOM-Drugs training set by executing the prefixes_from_geom.py script. This will ensure all files are placed in the necessary folders to smoothly reproduce our results. However, we also provide a copy of the SD file of all prefixes in the `prefixes` folder.
+
+
