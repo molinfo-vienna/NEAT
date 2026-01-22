@@ -64,9 +64,10 @@ class GEOMDataSet(InMemoryDataset):
         split="train",
         num_conformers=5,
     ):
-        super().__init__(root, transform, pre_transform, pre_filter)
         self.root = root
         self.num_conformers = num_conformers
+        super().__init__(root, transform, pre_transform, pre_filter)
+
         if split == "train":
             self.load(self.processed_paths[0])
         elif split == "val":

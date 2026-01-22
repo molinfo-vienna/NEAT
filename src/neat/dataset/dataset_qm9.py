@@ -55,8 +55,9 @@ class QM9DataSet(InMemoryDataset):
         pre_transform=None,
         pre_filter=None,
     ):
-        super().__init__(root, transform, pre_transform, pre_filter)
         self.root = root
+        super().__init__(root, transform, pre_transform, pre_filter)
+
         self.load(self.processed_paths[0])
 
     @property
