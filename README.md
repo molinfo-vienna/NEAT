@@ -35,13 +35,19 @@ pip install torch==2.9.0 --index-url https://download.pytorch.org/whl/cu130
 
 For more info, visit https://pytorch.org/get-started/locally.
 
-4. Install NEAT
+4. Install NEAT:
 
 ```bash
 pip install .
 ```
 
-5. Get trained model weights from [figshare](https://figshare.com/s/8291194090f2133fac63). Unzip and place into a `logs/NEAT` folder for using the generation script without modifications to the `config_generation.yaml` configuration file.
+5. Get trained model weights:
+
+```bash
+python scripts/get_weights.py
+```
+
+Alternatively you can download the trained model weights manually from [figshare](https://figshare.com/s/8291194090f2133fac63). Unzip and place into a `trained_models` folder for using the generation script without modifications to the `config_generation.yaml` configuration file.
 
 # Usage
 
@@ -49,7 +55,7 @@ pip install .
 
 1. Open `config_generation.yaml` and set the chosen options:
 
-- checkpoints_path: model checkpoints folder (the best-validation-loss checkpoints will be used per default)
+- checkpoints_path: model checkpoints folder
 - output_path: output folder
 - data_set: "QM9" or "GEOM"
 - num_molecules: number of generated molecules

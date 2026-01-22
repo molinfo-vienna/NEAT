@@ -1,2 +1,2 @@
-data_path: data/generated_best_geom/unconditional
+data_path: output/generated_best_geom/unconditional
 data_set: GEOM

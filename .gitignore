@@ -2,7 +2,8 @@ __pycache__/
 build
 data
 logs 
-logs_archived
+output
+trained_models
 *.egg-info
 *.env
 *.flake8
