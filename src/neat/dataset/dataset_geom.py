@@ -54,6 +54,7 @@ class GEOMDataSet(InMemoryDataset):
         80: 15,
         83: 16,
     }
+    NUM_CONFORMERS = 5
 
     def __init__(
         self,
@@ -62,11 +63,8 @@ class GEOMDataSet(InMemoryDataset):
         pre_transform=None,
         pre_filter=None,
         split="train",
-        num_conformers=5,
     ):
         super().__init__(root, transform, pre_transform, pre_filter)
-        self.root = root
-        self.num_conformers = num_conformers
         if split == "train":
             self.load(self.processed_paths[0])
         elif split == "val":
@@ -124,7 +122,7 @@ class GEOMDataSet(InMemoryDataset):
                     smiles,
                     conformers,
                     self.VOCABULARY,
-                    num_conformers=self.num_conformers,
+                    num_conformers=self.NUM_CONFORMERS,
                 )
                 if mol_data is not None:
                     data_list.extend(mol_data)
