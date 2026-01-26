@@ -250,13 +250,12 @@ class QM9DataSet(InMemoryDataset):
         with open(path, "r", encoding="utf-8") as f:
             lines = f.readlines()
 
-        mol_id = self.extract_id_from_filename(path)
         n, atoms, name_line = self.parse_xyz_atoms(lines)
         mol = self.build_rdkit_mol_from_atoms(
             n, atoms, name_line or os.path.basename(path)
         )
 
-        return (mol_id, mol)
+        return mol
 
     def process(self):
         # Load uncharacterized IDs to exclude (3054 molecules)
@@ -270,14 +269,15 @@ class QM9DataSet(InMemoryDataset):
                 if file.lower().endswith(".xyz"):
                     path = os.path.join(root, file)
                     try:
-                        mol_id, mol = self.parse_xyz_file(path)
+                        mol_id = self.extract_id_from_filename(path)
+                        if mol_id in exclude_set:
+                            continue
+                        mol = self.parse_xyz_file(path)
+                        data = self.process_molecule(mol, mol_id)
+                        if data is not None:
+                            data_list.append(data)
                     except Exception as e:
-                        logging.error(f"Error parsing {path}: {e}")
-                    if mol_id in exclude_set:
-                        continue
-                    data = self.process_molecule(mol, mol_id)
-                    if data is not None:
-                        data_list.append(data)
+                        logging.warning(f"Could not process {path}: {e}")
 
         if self.pre_filter is not None:
             data_list = [data for data in data_list if self.pre_filter(data)]
