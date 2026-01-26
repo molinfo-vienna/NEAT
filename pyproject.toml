@@ -24,6 +24,7 @@ dependencies = [
     "scipy==1.16.2",
     "torch_geometric",  # version managed by torch
     "tqdm==4.67.1",
+    "tensorboard===2.20.0",
 ]
 
 [project.optional-dependencies]
