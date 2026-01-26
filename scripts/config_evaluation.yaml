@@ -1,2 +1,3 @@
 data_path: output/generated_best_geom/unconditional
 data_set: GEOM
+compute_novelty: false

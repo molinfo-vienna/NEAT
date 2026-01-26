@@ -10,7 +10,7 @@ from lightning import seed_everything
 from rdkit import Chem
 from torch_geometric.data import Batch
 
-from neat.dataset import DataModule, GEOMDataSet
+from neat.dataset import GEOMDataSet
 from neat.model import NEAT
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -123,11 +123,6 @@ def generate(args: argparse.Namespace) -> None:
 
     MODEL = NEAT
     model = MODEL.load_from_checkpoint(checkpoint_path, map_location=DEVICE)
-
-    # Load preprocessed training data for computing novelty
-    data_root = os.path.join(ROOT, "data")
-    datamodule = DataModule(data_root, data_set=params["data_set"])
-    datamodule.setup()
 
     # Load prefix molecules from file
     prefix_path = os.path.join(os.getcwd(), "prefixes", "prefixes.sdf")

@@ -20,7 +20,7 @@ ROOT = os.getcwd()
 
 
 def compute_validity_uniqueness_novelty(
-    smiles: list[str], reference_smiles: list[str]
+    smiles: list[str], reference_smiles: list[str] = None
 ) -> tuple[float, float, float]:
     """Compute validity, uniqueness and novelty ratio of generated molecules.
 
@@ -31,7 +31,6 @@ def compute_validity_uniqueness_novelty(
     Returns:
         Tuple[float, float, float]: validity, uniqueness, and novelty ratios
     """
-    ref_set = set(reference_smiles)
     unique_smiles = set()
     num_valid = 0
 
@@ -41,11 +40,16 @@ def compute_validity_uniqueness_novelty(
         num_valid += 1
         unique_smiles.add(smile)
     num_unique = len(unique_smiles)
-    num_novel = len(unique_smiles - ref_set)
 
     p_valid = num_valid / len(smiles)
     p_valid_unique = num_unique / len(smiles)
-    p_valid_unique_novel = num_novel / len(smiles)
+    p_valid_unique_novel = None
+
+    if reference_smiles is not None:
+        ref_set = set(reference_smiles)
+        num_novel = len(unique_smiles - ref_set)
+        p_valid_unique_novel = num_novel / len(smiles)
+
     return p_valid, p_valid_unique, p_valid_unique_novel
 
 
@@ -86,10 +90,13 @@ def evaluate(args: argparse.Namespace) -> None:
     )
 
     # Load preprocessed training data for computing novelty
-    data_root = os.path.join(ROOT, "data")
-    datamodule = DataModule(data_root, data_set=params["data_set"])
-    datamodule.setup()
-    reference_smiles = datamodule.training_data.smiles
+    if params["compute_novelty"]:
+        data_root = os.path.join(ROOT, "data")
+        datamodule = DataModule(data_root, data_set=params["data_set"])
+        datamodule.setup()
+        reference_smiles = datamodule.training_data.smiles
+    else:
+        reference_smiles = None
 
     # Evaluate generated molecules across all available seeds or prefixes
     atom_stability_lst = []
@@ -141,9 +148,10 @@ def evaluate(args: argparse.Namespace) -> None:
                 f.write(
                     f"xyz2mol valid x unique: {xyz2mol_valid_x_unique * 100:.2f}%\n"
                 )
-                f.write(
-                    f"xyz2mol valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n"
-                )
+                if params["compute_novelty"]:
+                    f.write(
+                        f"xyz2mol valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n"
+                    )
                 f.write(f"Data set: {params['data_set']}\n")
                 f.write(f"RDKit version: {rdkit.__version__}\n")
 
@@ -152,7 +160,9 @@ def evaluate(args: argparse.Namespace) -> None:
             )
             for mol in mols:
                 if mol is not None:
-                    rdDepictor.Compute2DCoords(mol)  # Optimize 2D coordinates for better visualization 
+                    rdDepictor.Compute2DCoords(
+                        mol
+                    )  # Optimize 2D coordinates for better visualization
             img = Draw.MolsToGridImage(
                 mols,
                 molsPerRow=NUM_MOLECULES_PER_ROW,
@@ -219,9 +229,10 @@ def evaluate(args: argparse.Namespace) -> None:
     xyz2mol_valid_x_unique_mean, xyz2mol_valid_x_unique_ci = compute_mean_and_95_ci(
         xyz2mol_valid_x_unique_lst
     )
-    xyz2mol_valid_x_unique_x_novel_mean, xyz2mol_valid_x_unique_x_novel_ci = (
-        compute_mean_and_95_ci(xyz2mol_valid_x_unique_x_novel_lst)
-    )
+    if params["compute_novelty"]:
+        xyz2mol_valid_x_unique_x_novel_mean, xyz2mol_valid_x_unique_x_novel_ci = (
+            compute_mean_and_95_ci(xyz2mol_valid_x_unique_x_novel_lst)
+        )
 
     with open(os.path.join(data_path, "evaluation_summary.txt"), "w") as f:
         f.write(
@@ -242,9 +253,10 @@ def evaluate(args: argparse.Namespace) -> None:
         f.write(
             f"xyz2mol valid x unique: {xyz2mol_valid_x_unique_mean*100:.2f}% ± {xyz2mol_valid_x_unique_ci*100:.2f}%\n"
         )
-        f.write(
-            f"xyz2mol valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean*100:.2f}% ± {xyz2mol_valid_x_unique_x_novel_ci*100:.2f}%\n"
-        )
+        if params["compute_novelty"]:
+            f.write(
+                f"xyz2mol valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean*100:.2f}% ± {xyz2mol_valid_x_unique_x_novel_ci*100:.2f}%\n"
+            )
         f.write(f"Data set: {params['data_set']}\n")
         f.write(f"RDKit version: {rdkit.__version__}\n")
 

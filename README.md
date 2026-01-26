@@ -5,7 +5,7 @@
 </p>
 
 
-Welcome to the NEAT repository. NEAT is an autoregressive model that builds 3D molecules one atom at a time using a set transformer. It feeds the transformer’s output into a flow model to predict where the next atom should be by modeling the probability over its possible positions. The animation below shows how simple Gaussian noise is gradually transformed via the learned vector field into a distribution that points to the next atom’s location.
+Welcome to the NEAT repository. NEAT is an autoregressive model that builds 3D molecules one atom at a time using a set transformer. It feeds the transformer’s output into a flow model to predict where the next atom should be by modeling the probability over its possible positions. The animation below shows how simple Gaussian noise is gradually transformed via the learned vector field into a distribution that represents the next atom’s location.
 
 <p align="center">
   <img src="images/molecule_build.gif" alt="image" width="300">
@@ -84,7 +84,6 @@ python scripts/generation.py
 ```bash
 python scripts/prefixes_from_geom.py
 ```
-
 You could equally modify this script to generate your own prefixes.
 
 2. Open `config_generation.yaml` and configure as described above in ***Generate molecules***.
@@ -104,8 +103,9 @@ python scripts/generation_prefix.py
 
 1. Open `config_evaluation.yaml` and set the chosen options:
 
-- data_path: folder of the generated_mols.pt file obtained either from unconditional molecular generation or prefix completion. Example: "output/version_1/unconditional" or "output/version_1/prefix"
+- data_path: folder of the generated_mols.pt file obtained either from unconditional molecular generation or prefix completion. Example: "output/generated_best_geom/unconditional" or "output/generated_best_geom/prefix"
 - data_set: "QM9" or "GEOM"
+- compute_novelty: Novelty is computed using the training set SMILES. If set to true, it will trigger the data-processing pipeline (if you haven’t run it yet). If you only want to try the model without processing data, leave this option set to false.
 
 2. Run:
 
@@ -115,9 +115,9 @@ python scripts/evaluation.py
 
 3. What you get:
 
-- Metrics per seed.
-- Average across all seeds with 95% confidence intervals.
-- 2D and 3D visualizations of the first 100 molecules for each seeds.
+- Metrics per seed/prefix.
+- Average across all seeds/prefixes with 95% confidence intervals.
+- 2D and 3D visualizations of the first 100 molecules for each seed/prefix.
 
 
 ## Train model
