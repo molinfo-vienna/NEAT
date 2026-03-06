@@ -204,24 +204,21 @@ class MoleculeBuilder:
         bond_predictor = bond_predictor.to(device).eval()
 
         with torch.no_grad():
-            bond_types, pair_indices = bond_predictor.predict_bonds(x, pos, batch, device)
+            # predict_bonds returns (bond_types, pair_indices) for radius-graph edges
+            bond_types, pair_indices = bond_predictor.predict_bonds(
+                x, pos, batch, device,
+                radius=getattr(bond_predictor.hparams, "radius", 2.5),
+            )
 
         bond_types = bond_types.cpu()
         pair_indices = pair_indices.cpu()
         x, pos, batch = x.cpu(), pos.cpu(), batch.cpu()
 
-        # Precompute segment boundaries: pairs are ordered by molecule (mol 0, then 1, ...)
         unique_batches, batch_counts = batch.unique(return_counts=True)
-        pair_counts = batch_counts * (batch_counts - 1) // 2
-        pair_ptr = torch.cat([torch.tensor([0], dtype=torch.long), pair_counts.cumsum(0)])
-
-        # Precompute global -> local index: atom index g -> local index within its molecule
         local_idx = torch.zeros(x.shape[0], dtype=torch.long)
         for m, b in enumerate(unique_batches):
             mask = batch == b
             local_idx[mask] = torch.arange(batch_counts[m].item(), dtype=torch.long)
-
-        # Precompute atomic numbers for all atoms (vectorized lookup)
         atomic_nums = self._atomic_num_lookup[x.clamp(0, self._atomic_num_lookup.shape[0] - 1)]
 
         mols = []
@@ -231,31 +228,32 @@ class MoleculeBuilder:
             iterator = tqdm(iterator, desc="Building molecules (bond predictor)")
 
         for m in iterator:
-            start, end = pair_ptr[m].item(), pair_ptr[m + 1].item()
-            mol_pairs = pair_indices[start:end]  # [n_pairs, 2]
-            mol_bonds = bond_types[start:end]
+            b = unique_batches[m].item()
+            mol_mask = batch == b
+            mol_atoms = torch.where(mol_mask)[0]
+            n = mol_atoms.shape[0]
 
-            # Filter to bonded pairs only (bt > 0)
-            bonded_mask = mol_bonds > 0
-            if not bonded_mask.any():
-                bonded_pairs = mol_pairs.new_empty(0, 2)
-                bonded_types = mol_bonds.new_empty(0)
+            # Edges with both endpoints in this molecule and bond_type > 0
+            edge_mask = (batch[pair_indices[:, 0]] == b) & (batch[pair_indices[:, 1]] == b)
+            edge_mask = edge_mask & (bond_types > 0)
+            if not edge_mask.any():
+                bonded_pairs = pair_indices.new_empty(0, 2)
+                bonded_types = bond_types.new_empty(0)
             else:
-                bonded_pairs = mol_pairs[bonded_mask]
-                bonded_types = mol_bonds[bonded_mask]
+                bonded_pairs = pair_indices[edge_mask]
+                bonded_types = bond_types[edge_mask]
+                # Deduplicate: radius graph has both (i,j) and (j,i); keep only i < j
+                keep = bonded_pairs[:, 0] < bonded_pairs[:, 1]
+                bonded_pairs = bonded_pairs[keep]
+                bonded_types = bonded_types[keep]
 
-            # Convert to local indices (tensor indexing)
             i_local = local_idx[bonded_pairs[:, 0]]
             j_local = local_idx[bonded_pairs[:, 1]]
-
-            n = batch_counts[m].item()
-            mol_mask = batch == unique_batches[m]
             mol_atomic_nums = atomic_nums[mol_mask]
 
             rwmol = Chem.RWMol()
             for i in range(n):
                 rwmol.AddAtom(Chem.Atom(mol_atomic_nums[i].item()))
-
             for idx in range(bonded_pairs.shape[0]):
                 bt = bonded_types[idx].item()
                 rdkit_bt = RDKIT_BOND_TYPES[bt]

@@ -1,8 +1,7 @@
 """Train bond predictor models on QM9 and GEOM datasets.
 
-Trains a BondPredictor GNN that, given atom types and 3D coordinates,
-predicts bond types (no bond, single, double, triple, aromatic) between
-all atom pairs. One model is trained per dataset.
+Uses DataModule with task="bond_prediction" which precomputes radius-graph edges
+and edge labels. The BondPredictor predicts bond type per edge.
 
 Usage:
     python scripts/training_bond_predictor.py --config scripts/config_bond_predictor.yaml
@@ -17,11 +16,8 @@ import yaml
 from lightning import Trainer, seed_everything
 from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
-from torch_geometric.data import Batch
-from torch_geometric.loader import DataLoader
 
-from neat.dataset import GEOMDataSet, QM9DataSet
-from neat.dataset.bond_dataset import BondPredictionDataset
+from neat.dataset import DataModule
 from neat.model import BondPredictor
 
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -33,36 +29,6 @@ torch_geometric.seed_everything(42)
 seed_everything(42)
 
 ROOT = os.getcwd()
-
-def bond_collate_fn(batch: list) -> Batch:
-    """Collate function that batches Data objects and concatenates pair_labels."""
-    valid = [d for d in batch if hasattr(d, "pair_labels")]
-    if len(valid) == 0:
-        raise RuntimeError("Empty batch after filtering; check add_bond_labels function.")
-    return Batch.from_data_list(valid)
-
-
-def get_datasets(dataset_name: str):
-    """Load train/val/test for QM9 or GEOM and wrap with BondPredictionDataset."""
-    data_dir = os.path.join(ROOT, "data")
-    data_path = os.path.join(data_dir, dataset_name.upper())
-
-    if dataset_name.upper() == "QM9":
-        full_data = QM9DataSet(data_path)
-        splits = full_data.get_splits()
-        train_data = BondPredictionDataset(full_data[splits["train"]])
-        val_data = BondPredictionDataset(full_data[splits["val"]])
-        test_data = BondPredictionDataset(full_data[splits["test"]])
-        vocab_size = len(QM9DataSet.VOCABULARY) + 1
-    elif dataset_name.upper() == "GEOM":
-        train_data = BondPredictionDataset(GEOMDataSet(data_path, split="train"))
-        val_data = BondPredictionDataset(GEOMDataSet(data_path, split="val"))
-        test_data = BondPredictionDataset(GEOMDataSet(data_path, split="test"))
-        vocab_size = len(GEOMDataSet.VOCABULARY) + 1
-    else:
-        raise ValueError(f"Unknown dataset: {dataset_name}")
-
-    return train_data, val_data, test_data, vocab_size
 
 
 def train(args: argparse.Namespace) -> None:
@@ -83,28 +49,20 @@ def train(args: argparse.Namespace) -> None:
     )
 
     dataset_name = params.get("data_set", "QM9")
+    data_dir = os.path.join(ROOT, "data")
     print(f"Loading {dataset_name}...")
-    train_data, val_data, test_data, vocab_size = get_datasets(dataset_name)
-    print(f"Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
 
-    train_loader = DataLoader(
-        train_data,
+    datamodule = DataModule(
+        data_dir=data_dir,
+        data_set=dataset_name,
         batch_size=params.get("batch_size", 64),
-        shuffle=True,
-        drop_last=True,
-        collate_fn=bond_collate_fn,
-        persistent_workers=True,
-        num_workers=8,
+        num_workers=params.get("num_workers", 8),
+        task="bond_prediction",
+        radius=params.get("radius", 2.5),
     )
-    val_loader = DataLoader(
-        val_data,
-        batch_size=params.get("batch_size", 64),
-        shuffle=False,
-        drop_last=False,
-        collate_fn=bond_collate_fn,
-        persistent_workers=True,
-        num_workers=8,
-    )
+    datamodule.setup()
+    vocab_size = datamodule.vocab_size
+    print(f"Train: {len(datamodule.training_data)}, Val: {len(datamodule.validation_data)}")
 
     model_params = {
         "vocab_size": vocab_size,
@@ -116,6 +74,7 @@ def train(args: argparse.Namespace) -> None:
         "max_epochs": params.get("max_epochs", 100),
         "lr_warmup_epochs": params.get("lr_warmup_epochs", 5),
         "lr_min_ratio": params.get("lr_min_ratio", 0.1),
+        "radius": params.get("radius", 2.5),
     }
 
     model = BondPredictor(**model_params)
@@ -154,7 +113,7 @@ def train(args: argparse.Namespace) -> None:
         gradient_clip_val=1.0,
     )
 
-    trainer.fit(model=model, train_dataloaders=train_loader, val_dataloaders=val_loader)
+    trainer.fit(model=model, datamodule=datamodule)
     print(f"Best checkpoint: {checkpoint_callback.best_model_path}")
 
 

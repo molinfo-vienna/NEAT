@@ -6,6 +6,8 @@ from lightning import LightningDataModule
 from scipy.optimize import linear_sum_assignment
 from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
+from torch_geometric.nn import radius_graph
+from torch_geometric.transforms import Distance
 
 from .augmentation import RandomRotationAugmentation
 from .dataset_geom import GEOMDataSet
@@ -13,10 +15,87 @@ from .dataset_qm9 import QM9DataSet
 from .splitting import SourceTargetSplitter
 
 
-def batch_transform(batch: Batch, source_target_split: str, noise_std: float) -> Batch:
+def update_edge_labels(batch_data, rad_edge_index):
+    """Update the edge labels of a batch of graphs by:
+
+        1. encoding edges into 1D keys for the whole batch,
+        2. initializing the new edge labels tensor,
+        3. vectorized mapping,
+        4. scattering the edge labels.
+
+    Args:
+        batch_data (Batch): Batch of graphs.
+        rad_edge_index (Tensor): Edge index of the radius graph.
+
+    Returns:
+        Tensor: Updated edge labels.
+    """
+
+    # Total number of nodes in the entire batch (sum of all nodes in all graphs)
+    N_total = batch_data.num_nodes 
+    
+    # 1. Encode edges into 1D keys for the whole batch
+    index_key_in_mol_graph = batch_data.edge_index[0] * N_total + batch_data.edge_index[1]
+    index_key_in_rad_graph = rad_edge_index[0] * N_total + rad_edge_index[1]
+
+    # 2. Initialize the new labels tensor
+    num_rad_edges = rad_edge_index.size(1)
+    rad_edge_labels = torch.zeros((num_rad_edges,), device=batch_data.edge_labels.device, dtype=batch_data.edge_labels.dtype)
+
+    # 3. Sort index_key_in_rad_graph to enable binary search (searchsorted)
+    sorted_rad_keys, perm = torch.sort(index_key_in_rad_graph)
+    
+    # Find where the molecular edges land in the sorted radius edges
+    # This assumes every mol_edge exists in rad_edge_index
+    idx = torch.searchsorted(sorted_rad_keys, index_key_in_mol_graph)
+    
+    # Map the sorted positions back to the original unsorted radius_edge_index positions
+    target_indices = perm[idx]
+
+    # 4. Scatter the attributes
+    rad_edge_labels[target_indices] = batch_data.edge_labels
+
+    return rad_edge_labels
+
+
+def bond_prediction_batch_transform(batch: Batch, radius: float) -> Batch:
     """Transform a batch of graphs by:
 
-        1.applying random rotation augmentation,
+        1. adding edges to the graph by connecting atoms within a certain radius and
+           adding "0" bond type to the edge attributes for the new edges and
+        3. adding distances as edge attributes for all edges.
+
+    Args:
+        batch (Batch): Batch of graphs.
+        radius (float): Radius for the radius graph.
+
+    Returns:
+        Batch: Transformed batch of graphs.
+    """
+
+    # (1) Add edges to the graph by connecting atoms within a certain radius
+    # and add "0" bond type to the edge attributes for the new edges
+    # (keeping the original edge labels)
+    rad_edge_index = radius_graph(batch.pos, r=radius, batch=batch.batch, loop=False)
+    rad_edge_labels = update_edge_labels(batch, rad_edge_index)
+    batch.edge_index = rad_edge_index
+    batch.edge_labels = rad_edge_labels
+
+    # (2) Add distances as edge attributes for all edges
+    batch.edge_attributes = Distance(norm=False)(batch)
+
+    return batch
+
+
+def bond_prediction_collate_fn(batch: list, radius: float) -> Batch:
+    batch = Batch.from_data_list(batch)
+    return bond_prediction_batch_transform(batch, radius)
+
+
+def source_target_split_batch_transform(batch: Batch, source_target_split: str, noise_std: float) -> Batch:
+    """Transform a batch of graphs by:
+
+        1. applying random rotation augmentation,
         2. creating source-target splits,
         3. initializing stop tokens, and
         4. coupling positions in the target set with random positions.
@@ -67,9 +146,9 @@ def batch_transform(batch: Batch, source_target_split: str, noise_std: float) ->
     return batch
 
 
-def custom_collate_fn(batch: list, source_target_split: str, noise_std: float) -> Batch:
+def source_target_split_collate_fn(batch: list, source_target_split: str, noise_std: float) -> Batch:
     batch = Batch.from_data_list(batch)
-    return batch_transform(batch, source_target_split, noise_std)
+    return source_target_split_batch_transform(batch, source_target_split, noise_std)
 
 
 class DataModule(LightningDataModule):
@@ -79,9 +158,11 @@ class DataModule(LightningDataModule):
         training_data_dir (str): Directory containing the training data.
         data_set (str): Dataset to use ("QM9" or "GEOM").
         batch_size (int): Batch size for the data loader.
-        source_target_split (str): Source-target split mode.
-        noise_std (float): Standard deviation of the initial Gaussian noise in the flow matching process
         num_workers (int): Number of workers for the data loader.
+        task (str): Task to perform ("neat" or "bond_prediction").
+        source_target_split (str): Source-target split mode ("neighborhood" or "random").
+        noise_std (float): Standard deviation of the initial Gaussian noise in the flow matching process
+        radius (float): Radius for the radius graph.
 
     Returns:
         DataModule for loading and transforming the data for the NEAT model.
@@ -92,17 +173,15 @@ class DataModule(LightningDataModule):
         data_dir: str,
         data_set: str = "QM9",
         batch_size: int = 32,
+        num_workers: int = 1,
+        task: str = "neat",
         source_target_split: str = "neighborhood",
         noise_std: float = 1.4,
-        num_workers: int = 1,
+        radius: float = 2.5,
     ) -> None:
         super(DataModule, self).__init__()
         self.data_path = os.path.join(data_dir, data_set.upper())
         self.data_set = data_set.upper()
-        self.batch_size = batch_size
-        self.source_target_split = source_target_split
-        self.noise_std = noise_std
-        self.num_workers = num_workers
         if self.data_set == "QM9":
             self.vocab_size = len(QM9DataSet.VOCABULARY) + 1
             self.vocab = QM9DataSet.VOCABULARY
@@ -111,12 +190,26 @@ class DataModule(LightningDataModule):
             self.vocab = GEOMDataSet.VOCABULARY
         else:
             raise ValueError(f"Unknown data_set: {self.data_set}")
+        
+        self.batch_size = batch_size
+        self.num_workers = num_workers
 
-        self.source_target_split_fn = functools.partial(
-            custom_collate_fn,
-            source_target_split=self.source_target_split,
-            noise_std=self.noise_std,
-        )
+        self.task = task
+        if self.task == "neat":
+            self.source_target_split = source_target_split
+            self.noise_std = noise_std
+            self.source_target_split_fn = functools.partial(
+                source_target_split_collate_fn,
+                source_target_split=self.source_target_split,
+                noise_std=self.noise_std,
+            )
+
+        elif self.task == "bond_prediction":
+            self.radius = radius
+            self.bond_prediction_fn = functools.partial(
+                bond_prediction_collate_fn,
+                radius=self.radius,
+            )
 
     def setup(self, stage: str = "fit") -> None:
         if stage == "fit":
@@ -150,7 +243,7 @@ class DataModule(LightningDataModule):
             drop_last=True,
             num_workers=self.num_workers,
             persistent_workers=True,
-            collate_fn=self.source_target_split_fn,
+            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_fn,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -161,7 +254,7 @@ class DataModule(LightningDataModule):
             num_workers=self.num_workers,
             persistent_workers=True,
             drop_last=True,
-            collate_fn=self.source_target_split_fn,
+            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_fn,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -172,7 +265,7 @@ class DataModule(LightningDataModule):
             drop_last=False,
             num_workers=self.num_workers,
             persistent_workers=True,
-            collate_fn=self.source_target_split_fn,
+            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_fn,
         )
 
     def full_dataloader(self) -> DataLoader:
@@ -183,5 +276,5 @@ class DataModule(LightningDataModule):
             drop_last=False,
             num_workers=self.num_workers,
             persistent_workers=True,
-            collate_fn=self.source_target_split_fn,
+            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_fn,
         )

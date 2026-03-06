@@ -1,5 +1,6 @@
-data_set: GEOM
+data_set: QM9
 batch_size: 512
+radius: 2.5
 n_embd: 256
 n_conv_layers: 4
 dropout: 0.1

@@ -13,6 +13,13 @@ RDLogger.DisableLog("rdApp.*")
 
 SEED = 0
 
+RDKIT_BOND_TO_ID = {
+    Chem.rdchem.BondType.SINGLE: 1,
+    Chem.rdchem.BondType.DOUBLE: 2,
+    Chem.rdchem.BondType.TRIPLE: 3,
+    Chem.rdchem.BondType.AROMATIC: 4,
+}
+
 
 class GEOMDataSet(InMemoryDataset):
     """GEOM dataset.
@@ -208,13 +215,18 @@ class GEOMDataSet(InMemoryDataset):
                 # Bond information for data augmentation during training
                 # Note that the generation does not use bond information
                 edge_index = []
+                edge_labels = []
                 for bond in mol.GetBonds():
                     i = bond.GetBeginAtomIdx()
                     j = bond.GetEndAtomIdx()
                     edge_index.append((i, j))
                     edge_index.append((j, i))
+                    bt = RDKIT_BOND_TO_ID.get(bond.GetBondType(), 0)
+                    edge_labels.append(bt)
+                    edge_labels.append(bt)  # one label per directed edge
 
                 edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
+                edge_labels = torch.tensor(edge_labels, dtype=torch.long)
 
                 # Initialize molecular graph
                 G = nx.Graph()
@@ -232,6 +244,7 @@ class GEOMDataSet(InMemoryDataset):
                     x=x,
                     pos=pos,
                     edge_index=edge_index,
+                    edge_labels=edge_labels,
                     eccentricity=eccentricity_tensor,
                     smiles=smiles,
                 )
