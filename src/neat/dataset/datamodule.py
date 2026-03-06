@@ -58,20 +58,29 @@ def update_edge_labels(batch_data, rad_edge_index):
     return rad_edge_labels
 
 
-def bond_prediction_batch_transform(batch: Batch, radius: float) -> Batch:
+def bond_prediction_batch_transform(
+    batch: Batch, radius: float, noise_ratio: float = 0.0
+) -> Batch:
     """Transform a batch of graphs by:
 
-        1. adding edges to the graph by connecting atoms within a certain radius and
-           adding "0" bond type to the edge attributes for the new edges and
+        1. optionally adding isotropic Gaussian noise to coordinates (training only),
+        2. adding edges to the graph by connecting atoms within a certain radius and
+           adding "0" bond type to the edge attributes for the new edges, and
         3. adding distances as edge attributes for all edges.
 
     Args:
         batch (Batch): Batch of graphs.
         radius (float): Radius for the radius graph.
+        noise_ratio (float): Fraction of radius to use as std for isotropic coordinate
+            noise. Applied only when > 0 (training only).
 
     Returns:
         Batch: Transformed batch of graphs.
     """
+    # (0) Optionally add isotropic coordinate noise (for training robustness)
+    if noise_ratio > 0:
+        noise_std = noise_ratio * radius
+        batch.pos = batch.pos + noise_std * torch.randn_like(batch.pos)
 
     # (1) Add edges to the graph by connecting atoms within a certain radius
     # and add "0" bond type to the edge attributes for the new edges
@@ -87,12 +96,16 @@ def bond_prediction_batch_transform(batch: Batch, radius: float) -> Batch:
     return batch
 
 
-def bond_prediction_collate_fn(batch: list, radius: float) -> Batch:
+def bond_prediction_collate_fn(
+    batch: list, radius: float, noise_ratio: float = 0.0
+) -> Batch:
     batch = Batch.from_data_list(batch)
-    return bond_prediction_batch_transform(batch, radius)
+    return bond_prediction_batch_transform(batch, radius, noise_ratio)
 
 
-def source_target_split_batch_transform(batch: Batch, source_target_split: str, noise_std: float) -> Batch:
+def source_target_split_batch_transform(
+    batch: Batch, source_target_split: str, noise_std: float
+) -> Batch:
     """Transform a batch of graphs by:
 
         1. applying random rotation augmentation,
@@ -146,7 +159,9 @@ def source_target_split_batch_transform(batch: Batch, source_target_split: str, 
     return batch
 
 
-def source_target_split_collate_fn(batch: list, source_target_split: str, noise_std: float) -> Batch:
+def source_target_split_collate_fn(
+    batch: list, source_target_split: str, noise_std: float
+) -> Batch:
     batch = Batch.from_data_list(batch)
     return source_target_split_batch_transform(batch, source_target_split, noise_std)
 
@@ -163,6 +178,8 @@ class DataModule(LightningDataModule):
         source_target_split (str): Source-target split mode ("neighborhood" or "random").
         noise_std (float): Standard deviation of the initial Gaussian noise in the flow matching process
         radius (float): Radius for the radius graph.
+        noise_ratio (float): For bond_prediction, fraction of radius for isotropic coordinate
+            noise during training (e.g. 0.05 = 5%). 0 disables.
 
     Returns:
         DataModule for loading and transforming the data for the NEAT model.
@@ -178,6 +195,7 @@ class DataModule(LightningDataModule):
         source_target_split: str = "neighborhood",
         noise_std: float = 1.4,
         radius: float = 2.5,
+        noise_ratio: float = 0.0,
     ) -> None:
         super(DataModule, self).__init__()
         self.data_path = os.path.join(data_dir, data_set.upper())
@@ -206,9 +224,16 @@ class DataModule(LightningDataModule):
 
         elif self.task == "bond_prediction":
             self.radius = radius
-            self.bond_prediction_fn = functools.partial(
+            self.noise_ratio = noise_ratio
+            self.bond_prediction_train_fn = functools.partial(
                 bond_prediction_collate_fn,
                 radius=self.radius,
+                noise_ratio=self.noise_ratio,
+            )
+            self.bond_prediction_eval_fn = functools.partial(
+                bond_prediction_collate_fn,
+                radius=self.radius,
+                noise_ratio=0.0,
             )
 
     def setup(self, stage: str = "fit") -> None:
@@ -243,7 +268,7 @@ class DataModule(LightningDataModule):
             drop_last=True,
             num_workers=self.num_workers,
             persistent_workers=True,
-            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_fn,
+            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_train_fn,
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -254,7 +279,7 @@ class DataModule(LightningDataModule):
             num_workers=self.num_workers,
             persistent_workers=True,
             drop_last=True,
-            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_fn,
+            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_eval_fn,
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -265,7 +290,7 @@ class DataModule(LightningDataModule):
             drop_last=False,
             num_workers=self.num_workers,
             persistent_workers=True,
-            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_fn,
+            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_eval_fn,
         )
 
     def full_dataloader(self) -> DataLoader:
@@ -276,5 +301,5 @@ class DataModule(LightningDataModule):
             drop_last=False,
             num_workers=self.num_workers,
             persistent_workers=True,
-            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_fn,
+            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_eval_fn,
         )

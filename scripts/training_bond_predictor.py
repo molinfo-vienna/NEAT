@@ -59,6 +59,7 @@ def train(args: argparse.Namespace) -> None:
         num_workers=params.get("num_workers", 8),
         task="bond_prediction",
         radius=params.get("radius", 2.5),
+        noise_ratio=params.get("noise_ratio", 0.0),
     )
     datamodule.setup()
     vocab_size = datamodule.vocab_size
@@ -75,6 +76,7 @@ def train(args: argparse.Namespace) -> None:
         "lr_warmup_epochs": params.get("lr_warmup_epochs", 5),
         "lr_min_ratio": params.get("lr_min_ratio", 0.1),
         "radius": params.get("radius", 2.5),
+        "noise_ratio": params.get("noise_ratio", 0.05),
     }
 
     model = BondPredictor(**model_params)
