@@ -9,5 +9,5 @@ weight_decay: 1.0e-6
 max_epochs: 100
 lr_warmup_epochs: 5
 lr_min_ratio: 0.1
-early_stopping_patience: 10
+early_stopping_patience: 5
 early_stopping_min_delta: 1.0e-3

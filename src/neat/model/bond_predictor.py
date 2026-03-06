@@ -9,25 +9,19 @@ from torch import Tensor
 from torch.nn import functional as F
 from torch.optim import AdamW
 from torch_geometric.data import Data
-from torch_geometric.nn import GINConv, radius_graph
-
-from .positional_encoding import FourierPositionEncoding
+from torch_geometric.nn import GINEConv, radius_graph
+from torch_geometric.transforms import Distance
 
 # Bond types: 0=no bond, 1=single, 2=double, 3=triple, 4=aromatic
 NUM_BOND_TYPES = 5
 
 
 class BondPredictor(LightningModule):
-    """GNN to predict bond types for edges in a molecular graph.
-
-    Expects data with edge_index (radius graph) and edge_labels (precomputed).
-    Predicts one of 5 bond types per edge: no bond, single, double, triple, aromatic.
-    """
+    """GNN to predict bond types for edges in a molecular graph."""
 
     def __init__(self, **params) -> None:
         super().__init__()
         self.save_hyperparameters()
-        self.hparams.setdefault("radius", 2.5)  # for inference when building radius graph
 
         n_embd = self.hparams.n_embd
         n_conv_layers = self.hparams.n_conv_layers
@@ -35,8 +29,14 @@ class BondPredictor(LightningModule):
         self.atom_type_embedding = nn.Embedding(
             num_embeddings=self.hparams.vocab_size, embedding_dim=n_embd
         )
-        self.fourier_encoding_layer = FourierPositionEncoding(out_dim=n_embd)
 
+        self.edge_encoder = nn.Sequential(
+            nn.Linear(1, n_embd // 2),
+            nn.ReLU(),
+            nn.Linear(n_embd // 2, n_embd),
+        )
+
+        # GINEConv layers: message passing with edge features
         self.conv_layers = nn.ModuleList()
         for _ in range(n_conv_layers):
             nn_module = nn.Sequential(
@@ -45,12 +45,15 @@ class BondPredictor(LightningModule):
                 nn.Dropout(self.hparams.dropout),
                 nn.Linear(n_embd * 2, n_embd),
             )
-            self.conv_layers.append(GINConv(nn=nn_module, eps=0.0, train_eps=True))
+            self.conv_layers.append(
+                GINEConv(nn=nn_module, eps=0.0, train_eps=True, edge_dim=n_embd)
+            )
         self.layer_norm = nn.LayerNorm(n_embd)
         self.dropout = nn.Dropout(self.hparams.dropout)
 
+        # Bond prediction head: [h_src; h_dst; dist] -> 5-way logits
         self.bond_mlp = nn.Sequential(
-            nn.Linear(n_embd * 2, n_embd),
+            nn.Linear(n_embd * 2 + 1, n_embd),
             nn.ReLU(),
             nn.Dropout(self.hparams.dropout),
             nn.Linear(n_embd, n_embd),
@@ -58,34 +61,50 @@ class BondPredictor(LightningModule):
             nn.Linear(n_embd, NUM_BOND_TYPES),
         )
 
+    def _get_edge_attr(self, data: Data) -> Tensor:
+        """Get edge attributes (distances). Compute from pos if not in data."""
+        edge_attr = getattr(data, "edge_attr", None)
+        if edge_attr is not None:
+            if edge_attr.dim() == 1:
+                edge_attr = edge_attr.unsqueeze(1)
+            return edge_attr
+        # Fallback: compute distances from positions
+        data = Distance(norm=False)(data)
+        return data.edge_attr
+
     def forward(self, data: Data) -> Tensor:
         """Forward pass.
 
         Args:
-            data: PyG Batch with x, pos, batch, edge_index, edge_labels.
-                  edge_index and edge_labels are precomputed by the datamodule.
+            data: PyG Batch with x, edge_index, edge_attr, edge_labels.
 
         Returns:
-            bond_logits: [num_edges, 5] logits for each edge.
+            bond_logits: [num_edges, 5] logits per edge.
         """
-        # (1) Node embeddings
-        atom_type_emb = self.atom_type_embedding(data.x)
-        pos_emb = self.fourier_encoding_layer(data.pos)
-        x = atom_type_emb + pos_emb
+        if data.edge_index.shape[1] == 0:
+            return torch.zeros(0, NUM_BOND_TYPES, device=data.x.device)
+
+        # (1) Node features
+        x = self.atom_type_embedding(data.x)
         x = self.dropout(x)
 
-        # Step 2: Message passing
+        # (2) Edge features
+        edge_dist = self._get_edge_attr(data)
+        edge_attr = self.edge_encoder(edge_dist)
+
+        # (3) Message passing with GINEConv
         for conv in self.conv_layers:
-            x = conv(x, data.edge_index) + x
+            x = conv(x, data.edge_index, edge_attr) + x
             x = F.relu(x)
         x = self.layer_norm(x)
 
-        # Step 3: Bond prediction per edge
+        # (4) Bond prediction: [h_src; h_dst; dist]
         src, dst = data.edge_index[0], data.edge_index[1]
-        h_src = x[src]  # [num_edges, n_embd]
+        h_src = x[src]
         h_dst = x[dst]
-        edge_features = torch.cat([h_src, h_dst], dim=-1)  # [num_edges, n_embd*2]
-        bond_logits = self.bond_mlp(edge_features)  # [num_edges, 5]
+        edge_dist_scalar = self._get_edge_attr(data)  # [num_edges, 1]
+        edge_features = torch.cat([h_src, h_dst, edge_dist_scalar], dim=-1)
+        bond_logits = self.bond_mlp(edge_features)
 
         return bond_logits
 
@@ -115,12 +134,12 @@ class BondPredictor(LightningModule):
             data.batch = torch.zeros(x.shape[0], dtype=torch.long, device=device)
         data = data.to(device)
 
-        # Build radius graph (same as datamodule's bond_prediction_batch_transform)
         data.edge_index = radius_graph(data.pos, r=radius, batch=data.batch, loop=False)
+        # edge_attr not set; _get_edge_attr will compute from pos
 
         logits = self(data)
         bond_types = logits.argmax(dim=1)
-        pair_indices = data.edge_index.t()  # [num_edges, 2]
+        pair_indices = data.edge_index.t()
 
         return bond_types, pair_indices
 

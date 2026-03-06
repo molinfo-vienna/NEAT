@@ -81,8 +81,8 @@ def bond_prediction_batch_transform(batch: Batch, radius: float) -> Batch:
     batch.edge_index = rad_edge_index
     batch.edge_labels = rad_edge_labels
 
-    # (2) Add distances as edge attributes for all edges
-    batch.edge_attributes = Distance(norm=False)(batch)
+    # (2) Add distances as edge attributes (Distance adds batch.edge_attr)
+    batch = Distance(norm=False)(batch)
 
     return batch
 

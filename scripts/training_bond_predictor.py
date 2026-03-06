@@ -93,7 +93,7 @@ def train(args: argparse.Namespace) -> None:
     early_stopping = EarlyStopping(
         monitor="val/loss",
         mode="min",
-        patience=params.get("early_stopping_patience", 10),
+        patience=params.get("early_stopping_patience", 5),
         min_delta=params.get("early_stopping_min_delta", 1e-3),
     )
 
