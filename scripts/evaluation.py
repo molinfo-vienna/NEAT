@@ -7,7 +7,7 @@ import numpy as np
 import py3Dmol
 import rdkit
 import yaml
-from rdkit.Chem import AllChem, Draw, rdDepictor
+from rdkit.Chem import AllChem, Draw, MolToSmiles, rdDepictor
 
 from neat.dataset import DataModule
 from neat.model.molecule_builder import MoleculeBuilder
@@ -106,6 +106,10 @@ def evaluate(args: argparse.Namespace) -> None:
     xyz2mol_valid_lst = []
     xyz2mol_valid_x_unique_lst = []
     xyz2mol_valid_x_unique_x_novel_lst = []
+    bond_predictor_valid_lst = []
+    bond_predictor_valid_x_unique_lst = []
+    bond_predictor_valid_x_unique_x_novel_lst = []
+    use_bond_predictor = params.get("bond_predictor_path") is not None
     data_path = Path(os.path.join(ROOT, params["data_path"]))
     for subdir in data_path.iterdir():
         if subdir.is_dir() and (
@@ -123,21 +127,44 @@ def evaluate(args: argparse.Namespace) -> None:
                 edm_invalid_idxs,
             ) = edm_metrics(x, pos, batch, params["data_set"])
             edm_valid_x_unique = edm_valid * edm_unique
-
-            smiles = builder.generate_smiles_from_rdkit_molecules(
-                x, pos, batch, progress_bar=True
-            )
-
-            xyz2mol_valid, xyz2mol_valid_x_unique, xyz2mol_valid_x_unique_x_novel = (
-                compute_validity_uniqueness_novelty(smiles, reference_smiles)
-            )
             atom_stability_lst.append(atom_stability)
             molecule_stability_lst.append(mol_stability)
             lookup_valid_lst.append(edm_valid)
             lookup_valid_x_unique_lst.append(edm_valid_x_unique)
+
+            mols = builder.generate_rdkit_molecules_via_xyz2mol(
+                x, pos, batch, progress_bar=True
+            )
+            smiles = [
+                MolToSmiles(mol, canonical=True) if mol is not None else None for mol in mols
+            ]
+            (
+                xyz2mol_valid, 
+                xyz2mol_valid_x_unique, 
+                xyz2mol_valid_x_unique_x_novel 
+            )= compute_validity_uniqueness_novelty(smiles, reference_smiles)
             xyz2mol_valid_lst.append(xyz2mol_valid)
             xyz2mol_valid_x_unique_lst.append(xyz2mol_valid_x_unique)
             xyz2mol_valid_x_unique_x_novel_lst.append(xyz2mol_valid_x_unique_x_novel)
+
+            if use_bond_predictor:
+                mols_bp = builder.generate_rdkit_molecules_via_bond_predictor(
+                    x, pos, batch,
+                    bond_predictor_path=params["bond_predictor_path"],
+                    progress_bar=True,
+                )
+                smiles_bp = [
+                    MolToSmiles(mol, canonical=True) if mol is not None else None
+                    for mol in mols_bp
+                ]
+                (
+                    bp_valid,
+                    bp_valid_x_unique,
+                    bp_valid_x_unique_x_novel,
+                ) = compute_validity_uniqueness_novelty(smiles_bp, reference_smiles)
+                bond_predictor_valid_lst.append(bp_valid)
+                bond_predictor_valid_x_unique_lst.append(bp_valid_x_unique)
+                bond_predictor_valid_x_unique_x_novel_lst.append(bp_valid_x_unique_x_novel)
 
             with open(os.path.join(subdata_path, "evaluation_results.txt"), "w") as f:
                 f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
@@ -149,13 +176,16 @@ def evaluate(args: argparse.Namespace) -> None:
                     f"xyz2mol valid x unique: {xyz2mol_valid_x_unique * 100:.2f}%\n"
                 )
                 if params["compute_novelty"]:
-                    f.write(
-                        f"xyz2mol valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n"
-                    )
+                    f.write(f"xyz2mol valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n")
+                if use_bond_predictor:
+                    f.write(f"bond_predictor valid: {bp_valid*100:.2f}%\n")
+                    f.write(f"bond_predictor valid x unique: {bp_valid_x_unique*100:.2f}%\n")
+                    if params["compute_novelty"]:
+                        f.write(f"bond_predictor valid x unique x novel: {bp_valid_x_unique_x_novel*100:.2f}%\n")
                 f.write(f"Data set: {params['data_set']}\n")
                 f.write(f"RDKit version: {rdkit.__version__}\n")
 
-            mols = builder.generate_rdkit_molecules(
+            mols = builder.generate_rdkit_molecules_via_xyz2mol(
                 x, pos, batch, break_after_k_mols=NUM_MOLECULES_PLOTTED
             )
             for mol in mols:
@@ -233,6 +263,18 @@ def evaluate(args: argparse.Namespace) -> None:
         xyz2mol_valid_x_unique_x_novel_mean, xyz2mol_valid_x_unique_x_novel_ci = (
             compute_mean_and_95_ci(xyz2mol_valid_x_unique_x_novel_lst)
         )
+    if use_bond_predictor:
+        bond_predictor_valid_mean, bond_predictor_valid_ci = compute_mean_and_95_ci(
+            bond_predictor_valid_lst
+        )
+        bond_predictor_valid_x_unique_mean, bond_predictor_valid_x_unique_ci = (
+            compute_mean_and_95_ci(bond_predictor_valid_x_unique_lst)
+        )
+        if params["compute_novelty"]:
+            (
+                bond_predictor_valid_x_unique_x_novel_mean,
+                bond_predictor_valid_x_unique_x_novel_ci,
+            ) = compute_mean_and_95_ci(bond_predictor_valid_x_unique_x_novel_lst)
 
     with open(os.path.join(data_path, "evaluation_summary.txt"), "w") as f:
         f.write(
@@ -257,6 +299,17 @@ def evaluate(args: argparse.Namespace) -> None:
             f.write(
                 f"xyz2mol valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean*100:.2f}% ± {xyz2mol_valid_x_unique_x_novel_ci*100:.2f}%\n"
             )
+        if use_bond_predictor:
+            f.write(
+                f"bond_predictor valid: {bond_predictor_valid_mean*100:.2f}% ± {bond_predictor_valid_ci*100:.2f}%\n"
+            )
+            f.write(
+                f"bond_predictor valid x unique: {bond_predictor_valid_x_unique_mean*100:.2f}% ± {bond_predictor_valid_x_unique_ci*100:.2f}%\n"
+            )
+            if params["compute_novelty"]:
+                f.write(
+                    f"bond_predictor valid x unique x novel: {bond_predictor_valid_x_unique_x_novel_mean*100:.2f}% ± {bond_predictor_valid_x_unique_x_novel_ci*100:.2f}%\n"
+                )
         f.write(f"Data set: {params['data_set']}\n")
         f.write(f"RDKit version: {rdkit.__version__}\n")
 
