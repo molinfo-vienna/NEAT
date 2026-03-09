@@ -7,6 +7,7 @@ import numpy as np
 import py3Dmol
 import rdkit
 import yaml
+from posebusters import PoseBusters
 from rdkit.Chem import AllChem, Draw, MolToSmiles, rdDepictor
 
 from neat.dataset import DataModule
@@ -68,6 +69,23 @@ def compute_mean_and_95_ci(data: list[float]) -> tuple[float, float]:
     return mean, margin_of_error
 
 
+def save_molecules_to_sdf(mols: list[rdkit.Chem.Mol], file_path: str) -> None:
+    """Save a list of RDKit molecules to an SDF file.
+
+    Args:
+        mols (List[rdkit.Chem.Mol]): list of RDKit molecule objects.
+        file_path (str): path to save the SDF file.
+
+    Returns:
+        None
+    """
+    writer = rdkit.Chem.SDWriter(file_path)
+    for mol in mols:
+        if mol is not None:
+            writer.write(mol)
+    writer.close()
+
+
 def evaluate(args: argparse.Namespace) -> None:
     """Evaluate generated molecules using various metrics.
 
@@ -109,7 +127,9 @@ def evaluate(args: argparse.Namespace) -> None:
     bp_valid_lst = []
     bp_valid_x_unique_lst = []
     bp_valid_x_unique_x_novel_lst = []
+    posebusters_metrics_list = []
     use_bond_predictor = params.get("bond_predictor_path") is not None
+    compute_posebusters = bool(params.get("compute_posebusters", False))
     data_path = Path(os.path.join(ROOT, params["data_path"]))
     for subdir in data_path.iterdir():
         if subdir.is_dir() and (
@@ -165,23 +185,42 @@ def evaluate(args: argparse.Namespace) -> None:
                 bp_valid_x_unique_lst.append(bp_valid_x_unique)
                 bp_valid_x_unique_x_novel_lst.append(bp_valid_x_unique_x_novel)
 
+                # Compute PoseBusters metrics for this seed/prefix and save results (optional)
+                if compute_posebusters:
+                    buster = PoseBusters(config="mol")
+                    pred_file = os.path.join(subdata_path, "generated_molecules_bond_predictor.sdf")
+                    save_molecules_to_sdf(mols_bp, pred_file)
+                    df = buster.bust([pred_file], None, None, full_report=True)
+                    df.to_csv(os.path.join(subdata_path, "posebusters_report_bond_predictor.csv"), index=False)
+                    pb_metrics = {}
+                    for column in df.columns:
+                        pb_metrics[column] = df[column].mean().item()
+                    posebusters_metrics_list.append(pb_metrics)
+                    
             # Save evaluation results and generated molecule images for this seed/prefix
             with open(os.path.join(subdata_path, "evaluation_results.txt"), "w") as f:
-                f.write(f"EDM atom stability: {atom_stability*100:.2f}%\n")
-                f.write(f"EDM molecule stability: {mol_stability*100:.2f}%\n")
-                f.write(f"EDM lookup valid: {edm_valid*100:.2f}%\n")
-                f.write(f"EDM lookup valid x unique: { edm_valid_x_unique * 100:.2f}%\n")
-                f.write(f"xyz2mol valid: {xyz2mol_valid*100:.2f}%\n")
-                f.write(f"xyz2mol valid x unique: {xyz2mol_valid_x_unique * 100:.2f}%\n")
-                if params["compute_novelty"]:
-                    f.write(f"xyz2mol valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n")
-                if use_bond_predictor:
-                    f.write(f"bond_predictor valid: {bp_valid*100:.2f}%\n")
-                    f.write(f"bond_predictor valid x unique: {bp_valid_x_unique*100:.2f}%\n")
-                    if params["compute_novelty"]:
-                        f.write(f"bond_predictor valid x unique x novel: {bp_valid_x_unique_x_novel*100:.2f}%\n")
                 f.write(f"Data set: {params['data_set']}\n")
                 f.write(f"RDKit version: {rdkit.__version__}\n")
+                f.write("\nEDM metrics:\n")
+                f.write(f"Atom stable: {atom_stability*100:.2f}%\n")
+                f.write(f"Molecule stable: {mol_stability*100:.2f}%\n")
+                f.write(f"Valid: {edm_valid*100:.2f}%\n")
+                f.write(f"Valid x unique: { edm_valid_x_unique * 100:.2f}%\n")
+                f.write("\nxyz2mol metrics:\n")
+                f.write(f"Valid: {xyz2mol_valid*100:.2f}%\n")
+                f.write(f"Valid x unique: {xyz2mol_valid_x_unique * 100:.2f}%\n")
+                if params["compute_novelty"]:
+                    f.write(f"Valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n")
+                if use_bond_predictor:
+                    f.write("\nBond predictor metrics:\n")
+                    f.write(f"Valid: {bp_valid*100:.2f}%\n")
+                    f.write(f"Valid x unique: {bp_valid_x_unique*100:.2f}%\n")
+                    if params["compute_novelty"]:
+                        f.write(f"Valid x unique x novel: {bp_valid_x_unique_x_novel*100:.2f}%\n")
+                if compute_posebusters and posebusters_metrics_list:
+                    f.write("\nPoseBusters metrics:\n")
+                    for metric, value in posebusters_metrics_list[0].items():
+                        f.write(f"{metric}: {value*100:.2f}%\n")
 
             mols_plotting_subset = mols_xyz2mol[:NUM_MOLECULES_PLOTTED]
             for mol in mols_plotting_subset:
@@ -274,41 +313,51 @@ def evaluate(args: argparse.Namespace) -> None:
             ) = compute_mean_and_95_ci(bp_valid_x_unique_x_novel_lst)
 
     with open(os.path.join(data_path, "evaluation_summary.txt"), "w") as f:
+        f.write(f"Data set: {params['data_set']}\n")
+        f.write(f"RDKit version: {rdkit.__version__}\n")
+        f.write("\nEDM metrics:\n")
         f.write(
-            f"Atom stability: {atom_stability_mean*100:.2f}% ± {atom_stability_ci*100:.2f}%\n"
+            f"Atom stable: {atom_stability_mean*100:.2f}% ± {atom_stability_ci*100:.2f}%\n"
         )
         f.write(
-            f"Molecule stability: {molecule_stability_mean*100:.2f}% ± {molecule_stability_ci*100:.2f}%\n"
+            f"Molecule stable: {molecule_stability_mean*100:.2f}% ± {molecule_stability_ci*100:.2f}%\n"
         )
         f.write(
-            f"Lookup valid: {lookup_valid_mean*100:.2f}% ± {lookup_valid_ci*100:.2f}%\n"
+            f"Valid: {lookup_valid_mean*100:.2f}% ± {lookup_valid_ci*100:.2f}%\n"
         )
         f.write(
-            f"Lookup valid x unique: {lookup_valid_x_unique_mean*100:.2f}% ± {lookup_valid_x_unique_ci*100:.2f}%\n"
+            f"Valid x unique: {lookup_valid_x_unique_mean*100:.2f}% ± {lookup_valid_x_unique_ci*100:.2f}%\n"
+        )
+        f.write("\nxyz2mol metrics:\n")
+        f.write(
+            f"Valid: {xyz2mol_valid_mean*100:.2f}% ± {xyz2mol_valid_ci*100:.2f}%\n"
         )
         f.write(
-            f"xyz2mol valid: {xyz2mol_valid_mean*100:.2f}% ± {xyz2mol_valid_ci*100:.2f}%\n"
-        )
-        f.write(
-            f"xyz2mol valid x unique: {xyz2mol_valid_x_unique_mean*100:.2f}% ± {xyz2mol_valid_x_unique_ci*100:.2f}%\n"
+            f"Valid x unique: {xyz2mol_valid_x_unique_mean*100:.2f}% ± {xyz2mol_valid_x_unique_ci*100:.2f}%\n"
         )
         if params["compute_novelty"]:
             f.write(
-                f"xyz2mol valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean*100:.2f}% ± {xyz2mol_valid_x_unique_x_novel_ci*100:.2f}%\n"
+                f"Valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean*100:.2f}% ± {xyz2mol_valid_x_unique_x_novel_ci*100:.2f}%\n"
             )
         if use_bond_predictor:
+            f.write("\nBond predictor metrics:\n")
             f.write(
-                f"bond_predictor valid: {bond_predictor_valid_mean*100:.2f}% ± {bond_predictor_valid_ci*100:.2f}%\n"
+                f"Valid: {bond_predictor_valid_mean*100:.2f}% ± {bond_predictor_valid_ci*100:.2f}%\n"
             )
             f.write(
-                f"bond_predictor valid x unique: {bond_predictor_valid_x_unique_mean*100:.2f}% ± {bond_predictor_valid_x_unique_ci*100:.2f}%\n"
+                f"Valid x unique: {bond_predictor_valid_x_unique_mean*100:.2f}% ± {bond_predictor_valid_x_unique_ci*100:.2f}%\n"
             )
             if params["compute_novelty"]:
                 f.write(
-                    f"bond_predictor valid x unique x novel: {bond_predictor_valid_x_unique_x_novel_mean*100:.2f}% ± {bond_predictor_valid_x_unique_x_novel_ci*100:.2f}%\n"
+                    f"Valid x unique x novel: {bond_predictor_valid_x_unique_x_novel_mean*100:.2f}% ± {bond_predictor_valid_x_unique_x_novel_ci*100:.2f}%\n"
                 )
-        f.write(f"Data set: {params['data_set']}\n")
-        f.write(f"RDKit version: {rdkit.__version__}\n")
+            if compute_posebusters and posebusters_metrics_list:
+                f.write("\nPoseBusters metrics:\n")
+                metric_names = list(posebusters_metrics_list[0].keys())
+                for metric_name in metric_names:
+                    values = [metrics[metric_name] for metrics in posebusters_metrics_list]
+                    mean, ci = compute_mean_and_95_ci(values)
+                    f.write(f"{metric_name}: {mean*100:.2f}% ± {ci*100:.2f}%\n")
 
 
 if __name__ == "__main__":
