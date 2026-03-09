@@ -265,6 +265,15 @@ class MoleculeBuilder:
 
             try:
                 mol = rwmol.GetMol()
+
+                # Attach 3D coordinates from `pos` as a conformer to get a 3D molecule
+                mol_pos = pos[mol_mask]
+                conf = Chem.Conformer(n)
+                for i in range(n):
+                    x_coord, y_coord, z_coord = mol_pos[i].tolist()
+                    conf.SetAtomPosition(i, (float(x_coord), float(y_coord), float(z_coord)))
+                mol.AddConformer(conf, assignId=True)
+
                 Chem.SanitizeMol(mol)
                 mols.append(mol)
             except Exception:
