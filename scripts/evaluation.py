@@ -99,16 +99,16 @@ def evaluate(args: argparse.Namespace) -> None:
         reference_smiles = None
 
     # Evaluate generated molecules across all available seeds or prefixes
-    atom_stability_lst = []
-    molecule_stability_lst = []
-    lookup_valid_lst = []
-    lookup_valid_x_unique_lst = []
+    edm_atom_stability_lst = []
+    edm_molecule_stability_lst = []
+    edm_valid_lst = []
+    edm_valid_x_unique_lst = []
     xyz2mol_valid_lst = []
     xyz2mol_valid_x_unique_lst = []
     xyz2mol_valid_x_unique_x_novel_lst = []
-    bond_predictor_valid_lst = []
-    bond_predictor_valid_x_unique_lst = []
-    bond_predictor_valid_x_unique_x_novel_lst = []
+    bp_valid_lst = []
+    bp_valid_x_unique_lst = []
+    bp_valid_x_unique_x_novel_lst = []
     use_bond_predictor = params.get("bond_predictor_path") is not None
     data_path = Path(os.path.join(ROOT, params["data_path"]))
     for subdir in data_path.iterdir():
@@ -119,6 +119,7 @@ def evaluate(args: argparse.Namespace) -> None:
             builder = MoleculeBuilder(vocab=params["data_set"])
             x, pos, batch = builder.load_tensor_from_file(subdata_path)
 
+            # Compute EDM-based metrics
             (
                 atom_stability,
                 mol_stability,
@@ -126,27 +127,25 @@ def evaluate(args: argparse.Namespace) -> None:
                 edm_unique,
                 edm_invalid_idxs,
             ) = edm_metrics(x, pos, batch, params["data_set"])
+            edm_atom_stability_lst.append(atom_stability)
+            edm_molecule_stability_lst.append(mol_stability)
+            edm_valid_lst.append(edm_valid)
             edm_valid_x_unique = edm_valid * edm_unique
-            atom_stability_lst.append(atom_stability)
-            molecule_stability_lst.append(mol_stability)
-            lookup_valid_lst.append(edm_valid)
-            lookup_valid_x_unique_lst.append(edm_valid_x_unique)
+            edm_valid_x_unique_lst.append(edm_valid_x_unique)
 
-            mols = builder.generate_rdkit_molecules_via_xyz2mol(
-                x, pos, batch, progress_bar=True
-            )
-            smiles = [
-                MolToSmiles(mol, canonical=True) if mol is not None else None for mol in mols
-            ]
+            # Compute xyz2mol-based metrics
+            mols_xyz2mol = builder.generate_rdkit_molecules_via_xyz2mol(x, pos, batch, progress_bar=True)
+            smiles_xyz2mol = [MolToSmiles(mol, canonical=True) if mol is not None else None for mol in mols_xyz2mol]
             (
                 xyz2mol_valid, 
                 xyz2mol_valid_x_unique, 
                 xyz2mol_valid_x_unique_x_novel 
-            )= compute_validity_uniqueness_novelty(smiles, reference_smiles)
+            )= compute_validity_uniqueness_novelty(smiles_xyz2mol, reference_smiles)
             xyz2mol_valid_lst.append(xyz2mol_valid)
             xyz2mol_valid_x_unique_lst.append(xyz2mol_valid_x_unique)
             xyz2mol_valid_x_unique_x_novel_lst.append(xyz2mol_valid_x_unique_x_novel)
 
+            # Compute bond predictor-based metrics if bond predictor is available
             if use_bond_predictor:
                 mols_bp = builder.generate_rdkit_molecules_via_bond_predictor(
                     x, pos, batch,
@@ -162,19 +161,18 @@ def evaluate(args: argparse.Namespace) -> None:
                     bp_valid_x_unique,
                     bp_valid_x_unique_x_novel,
                 ) = compute_validity_uniqueness_novelty(smiles_bp, reference_smiles)
-                bond_predictor_valid_lst.append(bp_valid)
-                bond_predictor_valid_x_unique_lst.append(bp_valid_x_unique)
-                bond_predictor_valid_x_unique_x_novel_lst.append(bp_valid_x_unique_x_novel)
+                bp_valid_lst.append(bp_valid)
+                bp_valid_x_unique_lst.append(bp_valid_x_unique)
+                bp_valid_x_unique_x_novel_lst.append(bp_valid_x_unique_x_novel)
 
+            # Save evaluation results and generated molecule images for this seed/prefix
             with open(os.path.join(subdata_path, "evaluation_results.txt"), "w") as f:
-                f.write(f"Atom stability: {atom_stability*100:.2f}%\n")
-                f.write(f"Molecule stability: {mol_stability*100:.2f}%\n")
-                f.write(f"Lookup valid: {edm_valid*100:.2f}%\n")
-                f.write(f"Lookup valid x unique: { edm_valid_x_unique * 100:.2f}%\n")
+                f.write(f"EDM atom stability: {atom_stability*100:.2f}%\n")
+                f.write(f"EDM molecule stability: {mol_stability*100:.2f}%\n")
+                f.write(f"EDM lookup valid: {edm_valid*100:.2f}%\n")
+                f.write(f"EDM lookup valid x unique: { edm_valid_x_unique * 100:.2f}%\n")
                 f.write(f"xyz2mol valid: {xyz2mol_valid*100:.2f}%\n")
-                f.write(
-                    f"xyz2mol valid x unique: {xyz2mol_valid_x_unique * 100:.2f}%\n"
-                )
+                f.write(f"xyz2mol valid x unique: {xyz2mol_valid_x_unique * 100:.2f}%\n")
                 if params["compute_novelty"]:
                     f.write(f"xyz2mol valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n")
                 if use_bond_predictor:
@@ -185,23 +183,21 @@ def evaluate(args: argparse.Namespace) -> None:
                 f.write(f"Data set: {params['data_set']}\n")
                 f.write(f"RDKit version: {rdkit.__version__}\n")
 
-            mols = builder.generate_rdkit_molecules_via_xyz2mol(
-                x, pos, batch, break_after_k_mols=NUM_MOLECULES_PLOTTED
-            )
-            for mol in mols:
+            mols_plotting_subset = mols_xyz2mol[:NUM_MOLECULES_PLOTTED]
+            for mol in mols_plotting_subset:
                 if mol is not None:
-                    rdDepictor.Compute2DCoords(
-                        mol
-                    )  # Optimize 2D coordinates for better visualization
+                    # Optimize 2D coordinates for better visualization
+                    # This operation is in place
+                    rdDepictor.Compute2DCoords(mol)
             img = Draw.MolsToGridImage(
-                mols,
+                mols_plotting_subset,
                 molsPerRow=NUM_MOLECULES_PER_ROW,
                 subImgSize=(RESOLUTION, RESOLUTION),
             )
             img.save(os.path.join(subdata_path, "generated_molecules.png"))
 
             mols_2d = []
-            for mol in mols:
+            for mol in mols_plotting_subset:
                 if mol is None:
                     mols_2d.append(None)
                 else:
@@ -247,13 +243,14 @@ def evaluate(args: argparse.Namespace) -> None:
                 f"Saved 3D visualization to {os.path.join(subdata_path, 'generated_molecules_3d.html')}"
             )
 
-    atom_stability_mean, atom_stability_ci = compute_mean_and_95_ci(atom_stability_lst)
+    # Compute overall mean and confidence intervals across all seeds/prefixes and save summary
+    atom_stability_mean, atom_stability_ci = compute_mean_and_95_ci(edm_atom_stability_lst)
     molecule_stability_mean, molecule_stability_ci = compute_mean_and_95_ci(
-        molecule_stability_lst
+        edm_molecule_stability_lst
     )
-    lookup_valid_mean, lookup_valid_ci = compute_mean_and_95_ci(lookup_valid_lst)
+    lookup_valid_mean, lookup_valid_ci = compute_mean_and_95_ci(edm_valid_lst)
     lookup_valid_x_unique_mean, lookup_valid_x_unique_ci = compute_mean_and_95_ci(
-        lookup_valid_x_unique_lst
+        edm_valid_x_unique_lst
     )
     xyz2mol_valid_mean, xyz2mol_valid_ci = compute_mean_and_95_ci(xyz2mol_valid_lst)
     xyz2mol_valid_x_unique_mean, xyz2mol_valid_x_unique_ci = compute_mean_and_95_ci(
@@ -265,16 +262,16 @@ def evaluate(args: argparse.Namespace) -> None:
         )
     if use_bond_predictor:
         bond_predictor_valid_mean, bond_predictor_valid_ci = compute_mean_and_95_ci(
-            bond_predictor_valid_lst
+            bp_valid_lst
         )
         bond_predictor_valid_x_unique_mean, bond_predictor_valid_x_unique_ci = (
-            compute_mean_and_95_ci(bond_predictor_valid_x_unique_lst)
+            compute_mean_and_95_ci(bp_valid_x_unique_lst)
         )
         if params["compute_novelty"]:
             (
                 bond_predictor_valid_x_unique_x_novel_mean,
                 bond_predictor_valid_x_unique_x_novel_ci,
-            ) = compute_mean_and_95_ci(bond_predictor_valid_x_unique_x_novel_lst)
+            ) = compute_mean_and_95_ci(bp_valid_x_unique_x_novel_lst)
 
     with open(os.path.join(data_path, "evaluation_summary.txt"), "w") as f:
         f.write(
