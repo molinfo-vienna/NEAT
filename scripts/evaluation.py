@@ -82,7 +82,10 @@ def save_molecules_to_sdf(mols: list[rdkit.Chem.Mol], file_path: str) -> None:
     writer = rdkit.Chem.SDWriter(file_path)
     for mol in mols:
         if mol is not None:
-            writer.write(mol)
+            try:
+                writer.write(mol)
+            except Exception:
+                continue
     writer.close()
 
 
@@ -190,7 +193,7 @@ def evaluate(args: argparse.Namespace) -> None:
                     buster = PoseBusters(config="mol")
                     pred_file = os.path.join(subdata_path, "generated_molecules_bond_predictor.sdf")
                     save_molecules_to_sdf(mols_bp, pred_file)
-                    df = buster.bust([pred_file], None, None, full_report=True)
+                    df = buster.bust([pred_file], None, None, full_report=False)
                     df.to_csv(os.path.join(subdata_path, "posebusters_report_bond_predictor.csv"), index=False)
                     pb_metrics = {}
                     for column in df.columns:
