@@ -686,8 +686,8 @@ class NEAT(LightningModule):
 
             rotation_augmentation = RandomRotationAugmentation()
             pos = rotation_augmentation.rotate_graphs_randomly(pos, batch_source)
-            trans = torch.randn(batch_size, 3, device=device)
-            pos += trans[batch_source]
+            # trans = torch.randn(batch_size, 3, device=device)
+            # pos += trans[batch_source]
         else:
             # (1) Sample initial atoms from the prior distribution of atom types in QM9
             if self.hparams.data_set == "QM9":
@@ -726,7 +726,8 @@ class NEAT(LightningModule):
             else:
                 raise ValueError(f"Unknown data set: {self.hparams.data_set}")
             # (2) Initialize starting positions with random ones
-            pos = self.hparams.noise_std * torch.randn(batch_size, 3, device=device)
+            pos = torch.zeros(batch_size, 3, device=device)
+            # pos = self.hparams.noise_std * torch.randn(batch_size, 3, device=device)
             # (3) Initialize the batch source tensor
             batch_source = torch.arange(batch_size, device=device)
         # (4) Create a mask for the stop tokens that will be used to track which molecules have a stop token
@@ -833,8 +834,9 @@ class NEAT(LightningModule):
 
                 x = torch.cat(updated_x, dim=0)  # [batch_size]
                 pos = torch.cat(updated_pos, dim=0)  # [batch_size, 3]
-                # pos -= pos.mean(dim=0, keepdim=True)
                 batch_source = torch.cat(updated_batch, dim=0)  # [batch_size]
+                mean_pos = global_mean_pool(pos, batch_source)
+                pos = pos - mean_pos[batch_source]
 
         return Batch(x=x, pos=pos, batch=batch_source)
 

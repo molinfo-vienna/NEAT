@@ -6,6 +6,8 @@ from lightning import LightningDataModule
 from scipy.optimize import linear_sum_assignment
 from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
+from torch_geometric.nn.pool import global_mean_pool
+
 
 from .augmentation import RandomRotationAugmentation
 from .dataset_geom import GEOMDataSet
@@ -39,6 +41,12 @@ def batch_transform(batch: Batch, source_target_split: str, noise_std: float) ->
     source_ptr, target_ptr = splitter.create_source_target_split(batch)
     batch.source_ptr = source_ptr
     batch.target_ptr = target_ptr
+
+    # (3) Recenter positions w.r.t. the source set atoms
+    mean_pos = global_mean_pool(
+        batch.pos[batch.source_ptr], batch.batch[batch.source_ptr]
+    )
+    batch.pos = batch.pos - mean_pos[batch.batch]
 
     # (3) Determine source sets with empty target sets, these have stop tokens
     target_set_mask = torch.zeros_like(
