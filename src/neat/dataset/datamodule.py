@@ -42,6 +42,9 @@ def batch_transform(batch: Batch, source_target_split: str, noise_std: float) ->
     batch.source_ptr = source_ptr
     batch.target_ptr = target_ptr
 
+    # (2.1) Inttroduce noisy into the source set positions by adding Gaussian noise
+    batch.pos[batch.source_ptr] += 0.1 * torch.randn_like(batch.pos[batch.source_ptr])
+
     # (3) Recenter positions w.r.t. the source set atoms
     mean_pos = global_mean_pool(
         batch.pos[batch.source_ptr], batch.batch[batch.source_ptr]
