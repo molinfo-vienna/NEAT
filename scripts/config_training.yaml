@@ -4,7 +4,7 @@ bias: true
 data_set: GEOM
 dropout: 0.1
 learning_rate: 2.5e-05
-lr_decay_epochs: 500
+lr_decay_epochs: 1000
 lr_min_ratio: 0.1
 lr_warmup_epochs: 10
 max_epochs: 1000
