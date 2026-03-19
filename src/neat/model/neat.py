@@ -526,7 +526,7 @@ class NEAT(LightningModule):
             # 1) linear warmup for warmup_iters steps
             warmup_epochs = self.hparams.lr_warmup_epochs
             min_lr = self.hparams.lr_min_ratio
-            lr_decay_epochs = self.hparams.max_epochs
+            lr_decay_epochs = self.hparams.lr_decay_epochs
             if epoch < warmup_epochs:
                 return (epoch + 1) / (warmup_epochs + 1)
             # 2) if it > lr_decay_iters, return min learning rate
