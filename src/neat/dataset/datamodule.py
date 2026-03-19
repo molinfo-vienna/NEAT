@@ -15,7 +15,13 @@ from .dataset_qm9 import QM9DataSet
 from .splitting import SourceTargetSplitter
 
 
-def batch_transform(batch: Batch, source_target_split: str, noise_std: float) -> Batch:
+def batch_transform(
+    batch: Batch,
+    source_target_split: str,
+    noise_std: float,
+    source_set_perturbation: float,
+    perturbation_factor: float,
+) -> Batch:
     """Transform a batch of graphs by:
 
         1.applying random rotation augmentation,
@@ -42,8 +48,13 @@ def batch_transform(batch: Batch, source_target_split: str, noise_std: float) ->
     batch.source_ptr = source_ptr
     batch.target_ptr = target_ptr
 
-    # (2.1) Inttroduce noisy into the source set positions by adding Gaussian noise
-    batch.pos[batch.source_ptr] += 0.1 * torch.randn_like(batch.pos[batch.source_ptr])
+    # (2.1) Introduce noisy into the source set positions by adding Gaussian noise
+    source_set_noise = source_set_perturbation * torch.randn_like(
+        batch.pos[batch.source_ptr]
+    )
+    dropout_mask = torch.rand_like(batch.source_ptr.float()) > perturbation_factor
+    source_set_noise[dropout_mask] *= 0.0
+    batch.pos[batch.source_ptr] += source_set_noise
 
     # (3) Recenter positions w.r.t. the source set atoms
     mean_pos = global_mean_pool(
@@ -78,9 +89,21 @@ def batch_transform(batch: Batch, source_target_split: str, noise_std: float) ->
     return batch
 
 
-def custom_collate_fn(batch: list, source_target_split: str, noise_std: float) -> Batch:
+def custom_collate_fn(
+    batch: list,
+    source_target_split: str,
+    noise_std: float,
+    source_set_perturbation: float,
+    perturbation_factor: float,
+) -> Batch:
     batch = Batch.from_data_list(batch)
-    return batch_transform(batch, source_target_split, noise_std)
+    return batch_transform(
+        batch,
+        source_target_split,
+        noise_std,
+        source_set_perturbation,
+        perturbation_factor,
+    )
 
 
 class DataModule(LightningDataModule):
@@ -105,6 +128,8 @@ class DataModule(LightningDataModule):
         batch_size: int = 32,
         source_target_split: str = "neighborhood",
         noise_std: float = 1.4,
+        source_set_perturbation: float = 0.1,
+        perturbation_factor: float = 0.2,
         num_workers: int = 1,
     ) -> None:
         super(DataModule, self).__init__()
@@ -113,6 +138,8 @@ class DataModule(LightningDataModule):
         self.batch_size = batch_size
         self.source_target_split = source_target_split
         self.noise_std = noise_std
+        self.source_set_perturbation = source_set_perturbation
+        self.perturbation_factor = perturbation_factor
         self.num_workers = num_workers
         if self.data_set == "QM9":
             self.vocab_size = len(QM9DataSet.VOCABULARY) + 1
@@ -127,6 +154,8 @@ class DataModule(LightningDataModule):
             custom_collate_fn,
             source_target_split=self.source_target_split,
             noise_std=self.noise_std,
+            source_set_perturbation=self.source_set_perturbation,
+            perturbation_factor=self.perturbation_factor,
         )
 
     def setup(self, stage: str = "fit") -> None:

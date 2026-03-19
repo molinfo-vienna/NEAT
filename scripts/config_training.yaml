@@ -18,3 +18,5 @@ rope: false
 time_step_resampling: 4
 time_step_sampling: logit_normal
 weight_decay: 1.0e-06
+source_set_perturbation: 0.1
+perturbation_factor: 0.2

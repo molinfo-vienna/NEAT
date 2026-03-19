@@ -766,7 +766,9 @@ class NEAT(LightningModule):
                 x_next = torch.argmax(probabilities, dim=1)
                 x_next_0_mask = x_next == 0
                 x_next_1_mask = x_next == 1
-                x_next = torch.multinomial(probabilities, num_samples=1).squeeze(1)  # [active_mol_count]
+                x_next = torch.multinomial(probabilities, num_samples=1).squeeze(
+                    1
+                )  # [active_mol_count]
                 x_next[x_next_0_mask] = 0
                 x_next[x_next_1_mask] = 1
 

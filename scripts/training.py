@@ -50,6 +50,8 @@ def train(args: argparse.Namespace) -> None:
         params["data_set"],
         batch_size=params["batch_size"],
         noise_std=params["noise_std"],
+        source_set_perturbation=params["source_set_perturbation"],
+        perturbation_factor=params["perturbation_factor"],
         num_workers=8,
     )
     datamodule.setup()
