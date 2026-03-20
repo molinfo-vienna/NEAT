@@ -83,7 +83,7 @@ class GenerationMonitor(Callback):
             raise ValueError(f"Unknown dataset: {self.dataset}")
 
         builder = MoleculeBuilder(vocab=pl_module.hparams.data_set)
-        mols = builder.generate_rdkit_molecules(
+        mols = builder.generate_rdkit_molecules_via_xyz2mol(
             generated_mols.x, generated_mols.pos, generated_mols.batch
         )
         n_valid = self.compute_validity(mols)
