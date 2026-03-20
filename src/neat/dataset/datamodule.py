@@ -6,8 +6,8 @@ from lightning import LightningDataModule
 from scipy.optimize import linear_sum_assignment
 from torch.utils.data import DataLoader
 from torch_geometric.data import Batch
-from torch_geometric.nn.pool import global_mean_pool
 from torch_geometric.nn import radius_graph
+from torch_geometric.nn.pool import global_mean_pool
 from torch_geometric.transforms import Distance
 
 from .augmentation import RandomRotationAugmentation
@@ -33,23 +33,29 @@ def update_edge_labels(batch_data, rad_edge_index):
     """
 
     # Total number of nodes in the entire batch (sum of all nodes in all graphs)
-    N_total = batch_data.num_nodes 
-    
+    N_total = batch_data.num_nodes
+
     # 1. Encode edges into 1D keys for the whole batch
-    index_key_in_mol_graph = batch_data.edge_index[0] * N_total + batch_data.edge_index[1]
+    index_key_in_mol_graph = (
+        batch_data.edge_index[0] * N_total + batch_data.edge_index[1]
+    )
     index_key_in_rad_graph = rad_edge_index[0] * N_total + rad_edge_index[1]
 
     # 2. Initialize the new labels tensor
     num_rad_edges = rad_edge_index.size(1)
-    rad_edge_labels = torch.zeros((num_rad_edges,), device=batch_data.edge_labels.device, dtype=batch_data.edge_labels.dtype)
+    rad_edge_labels = torch.zeros(
+        (num_rad_edges,),
+        device=batch_data.edge_labels.device,
+        dtype=batch_data.edge_labels.dtype,
+    )
 
     # 3. Sort index_key_in_rad_graph to enable binary search (searchsorted)
     sorted_rad_keys, perm = torch.sort(index_key_in_rad_graph)
-    
+
     # Find where the molecular edges land in the sorted radius edges
     # This assumes every mol_edge exists in rad_edge_index
     idx = torch.searchsorted(sorted_rad_keys, index_key_in_mol_graph)
-    
+
     # Map the sorted positions back to the original unsorted radius_edge_index positions
     target_indices = perm[idx]
 
@@ -60,8 +66,8 @@ def update_edge_labels(batch_data, rad_edge_index):
 
 
 def bond_prediction_batch_transform(
-    batch: Batch, 
-    radius: float, 
+    batch: Batch,
+    radius: float,
     noise_ratio: float = 0.0,
 ) -> Batch:
     """Transform a batch of graphs by:
@@ -100,8 +106,8 @@ def bond_prediction_batch_transform(
 
 
 def bond_prediction_collate_fn(
-    batch: list, 
-    radius: float, 
+    batch: list,
+    radius: float,
     noise_ratio: float = 0.0,
 ) -> Batch:
     batch = Batch.from_data_list(batch)
@@ -109,8 +115,8 @@ def bond_prediction_collate_fn(
 
 
 def source_target_split_batch_transform(
-    batch: Batch, 
-    source_target_split: str, 
+    batch: Batch,
+    source_target_split: str,
     noise_std: float,
     source_set_perturbation: float,
     perturbation_factor: float,
@@ -142,12 +148,13 @@ def source_target_split_batch_transform(
     batch.target_ptr = target_ptr
 
     # (2.1) Introduce noisy into the source set positions by adding Gaussian noise
-    source_set_noise = source_set_perturbation * torch.randn_like(
-        batch.pos[batch.source_ptr]
-    )
-    dropout_mask = torch.rand_like(batch.source_ptr.float()) > perturbation_factor
-    source_set_noise[dropout_mask] *= 0.0
-    batch.pos[batch.source_ptr] += source_set_noise
+    if perturbation_factor is not None and source_set_perturbation is not None:
+        source_set_noise = source_set_perturbation * torch.randn_like(
+            batch.pos[batch.source_ptr]
+        )
+        dropout_mask = torch.rand_like(batch.source_ptr.float()) > perturbation_factor
+        source_set_noise[dropout_mask] *= 0.0
+        batch.pos[batch.source_ptr] += source_set_noise
 
     # (3) Recenter positions w.r.t. the source set atoms
     mean_pos = global_mean_pool(
@@ -155,7 +162,7 @@ def source_target_split_batch_transform(
     )
     batch.pos = batch.pos - mean_pos[batch.batch]
 
-    # (3) Determine source sets with empty target sets, these have stop tokens
+    # (4) Determine source sets with empty target sets, these have stop tokens
     target_set_mask = torch.zeros_like(
         batch.batch, device=batch.batch.device, dtype=torch.bool
     )
@@ -164,7 +171,7 @@ def source_target_split_batch_transform(
     stop_tokens = ~(torch.isin(torch.arange(0, len(batch)), torch.unique(batch_target)))
     batch.stop_tokens = stop_tokens
 
-    # (4) Couple positions in the target set with random positions via linear sum assignment
+    # (5) Couple positions in the target set with random positions via linear sum assignment
     pos_target = batch.pos[target_set_mask]
     batch_target = batch_target.long()
     pos_random = noise_std * torch.randn_like(pos_target)
@@ -183,7 +190,6 @@ def source_target_split_batch_transform(
 
 
 def source_target_split_collate_fn(
-    
     batch: list,
     source_target_split: str,
     noise_std: float,
@@ -204,15 +210,17 @@ class DataModule(LightningDataModule):
     """DataModule for loading and transforming the data for the NEAT model.
 
     Args:
-        training_data_dir (str): Directory containing the training data.
-        data_set (str): Dataset to use ("QM9" or "GEOM").
-        batch_size (int): Batch size for the data loader.
-        num_workers (int): Number of workers for the data loader.
-        task (str): Task to perform ("neat" or "bond_prediction").
-        source_target_split (str): Source-target split mode ("neighborhood" or "random").
-        noise_std (float): Standard deviation of the initial Gaussian noise in the flow matching process
-        radius (float): Radius for the radius graph.
-        noise_ratio (float): For bond_prediction, fraction of radius for isotropic coordinate
+        data_dir (str): Directory containing the data.
+        data_set (str): Dataset to use ("QM9" or "GEOM"). Default is "QM9".
+        batch_size (int): Batch size for the data loader. Default is 32.
+        num_workers (int): Number of workers for the data loader. Default is 1.
+        task (str): Task to perform ("neat" or "bond_prediction"). Default is "neat".
+        flow_matching_noise_std (float): Standard deviation of the initial Gaussian noise in the flow matching process. Default is 1.4.
+        source_target_split (str): Source-target split mode ("neighborhood" or "random"). Default is "neighborhood".
+        source_set_perturbation_fraction (float): Fraction of source set nodes that receive random perturbation to their positions during training. Default is None.
+        source_set_perturbation_std (float): Standard deviation of the Gaussian noise added to the perturbed source set positions during training. Default is None.
+        bond_predictor_radius (float): Radius for the radius graph for bond prediction. Default is 2.5.
+        bond_predictor_noise_ratio (float): For bond_prediction, fraction of radius for isotropic coordinate
             noise during training (e.g. 0.05 = 5%). 0 disables.
 
     Returns:
@@ -226,22 +234,26 @@ class DataModule(LightningDataModule):
         batch_size: int = 32,
         num_workers: int = 1,
         task: str = "neat",
+        flow_matching_noise_std: float = 1.4,
         source_target_split: str = "neighborhood",
-        noise_std: float = 1.4,
-        source_set_perturbation: float = 0.1,
-        perturbation_factor: float = 0.2,
-        radius: float = 2.5,
-        noise_ratio: float = 0.0,
+        source_set_perturbation_fraction: float = None,
+        source_set_perturbation_std: float = None,
+        bond_predictor_radius: float = 2.5,
+        bond_predictor_noise_ratio: float = 0.0,
     ) -> None:
         super(DataModule, self).__init__()
-        self.data_path = os.path.join(data_dir, data_set.upper())
         self.data_set = data_set.upper()
+        self.data_path = os.path.join(data_dir, self.data_set)
         self.batch_size = batch_size
-        self.source_target_split = source_target_split
-        self.noise_std = noise_std
-        self.source_set_perturbation = source_set_perturbation
-        self.perturbation_factor = perturbation_factor
         self.num_workers = num_workers
+        self.task = task
+        self.flow_matching_noise_std = flow_matching_noise_std
+        self.source_target_split = source_target_split
+        self.source_set_perturbation_fraction = source_set_perturbation_fraction
+        self.source_set_perturbation_std = source_set_perturbation_std
+        self.bond_predictor_radius = bond_predictor_radius
+        self.bond_predictor_noise_ratio = bond_predictor_noise_ratio
+
         if self.data_set == "QM9":
             self.vocab_size = len(QM9DataSet.VOCABULARY) + 1
             self.vocab = QM9DataSet.VOCABULARY
@@ -250,32 +262,27 @@ class DataModule(LightningDataModule):
             self.vocab = GEOMDataSet.VOCABULARY
         else:
             raise ValueError(f"Unknown data_set: {self.data_set}")
-        self.batch_size = batch_size
-        self.num_workers = num_workers
 
-        self.task = task
         if self.task == "neat":
             self.source_target_split = source_target_split
-            self.noise_std = noise_std
+            self.flow_matching_noise_std = flow_matching_noise_std
             self.source_target_split_fn = functools.partial(
                 source_target_split_collate_fn,
                 source_target_split=self.source_target_split,
-                noise_std=self.noise_std,
-                source_set_perturbation=self.source_set_perturbation,
-                perturbation_factor=self.perturbation_factor,
+                noise_std=self.flow_matching_noise_std,
+                source_set_perturbation=self.source_set_perturbation_std,
+                perturbation_factor=self.source_set_perturbation_fraction,
             )
 
         elif self.task == "bond_prediction":
-            self.radius = radius
-            self.noise_ratio = noise_ratio
             self.bond_prediction_train_fn = functools.partial(
                 bond_prediction_collate_fn,
-                radius=self.radius,
-                noise_ratio=self.noise_ratio,
+                radius=self.bond_predictor_radius,
+                noise_ratio=self.bond_predictor_noise_ratio,
             )
             self.bond_prediction_eval_fn = functools.partial(
                 bond_prediction_collate_fn,
-                radius=self.radius,
+                radius=self.bond_predictor_radius,
                 noise_ratio=0.0,
             )
 
@@ -311,7 +318,11 @@ class DataModule(LightningDataModule):
             drop_last=True,
             num_workers=self.num_workers,
             persistent_workers=True,
-            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_train_fn,
+            collate_fn=(
+                self.source_target_split_fn
+                if self.task == "neat"
+                else self.bond_prediction_train_fn
+            ),
         )
 
     def val_dataloader(self) -> DataLoader:
@@ -322,7 +333,11 @@ class DataModule(LightningDataModule):
             num_workers=self.num_workers,
             persistent_workers=True,
             drop_last=True,
-            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_eval_fn,
+            collate_fn=(
+                self.source_target_split_fn
+                if self.task == "neat"
+                else self.bond_prediction_eval_fn
+            ),
         )
 
     def test_dataloader(self) -> DataLoader:
@@ -333,7 +348,11 @@ class DataModule(LightningDataModule):
             drop_last=False,
             num_workers=self.num_workers,
             persistent_workers=True,
-            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_eval_fn,
+            collate_fn=(
+                self.source_target_split_fn
+                if self.task == "neat"
+                else self.bond_prediction_eval_fn
+            ),
         )
 
     def full_dataloader(self) -> DataLoader:
@@ -344,5 +363,9 @@ class DataModule(LightningDataModule):
             drop_last=False,
             num_workers=self.num_workers,
             persistent_workers=True,
-            collate_fn=self.source_target_split_fn if self.task == "neat" else self.bond_prediction_eval_fn,
+            collate_fn=(
+                self.source_target_split_fn
+                if self.task == "neat"
+                else self.bond_prediction_eval_fn
+            ),
         )

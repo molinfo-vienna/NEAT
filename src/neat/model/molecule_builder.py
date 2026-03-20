@@ -161,7 +161,6 @@ class MoleculeBuilder:
 
         return mols
 
-
     def generate_rdkit_molecules_via_bond_predictor(
         self,
         x: torch.Tensor,
@@ -206,7 +205,10 @@ class MoleculeBuilder:
         with torch.no_grad():
             # predict_bonds returns (bond_types, pair_indices) for radius-graph edges
             bond_types, pair_indices = bond_predictor.predict_bonds(
-                x, pos, batch, device,
+                x,
+                pos,
+                batch,
+                device,
                 radius=getattr(bond_predictor.hparams, "radius", 2.5),
             )
 
@@ -219,7 +221,9 @@ class MoleculeBuilder:
         for m, b in enumerate(unique_batches):
             mask = batch == b
             local_idx[mask] = torch.arange(batch_counts[m].item(), dtype=torch.long)
-        atomic_nums = self._atomic_num_lookup[x.clamp(0, self._atomic_num_lookup.shape[0] - 1)]
+        atomic_nums = self._atomic_num_lookup[
+            x.clamp(0, self._atomic_num_lookup.shape[0] - 1)
+        ]
 
         mols = []
         num_mols = len(unique_batches)
@@ -234,7 +238,9 @@ class MoleculeBuilder:
             n = mol_atoms.shape[0]
 
             # Edges with both endpoints in this molecule and bond_type > 0
-            edge_mask = (batch[pair_indices[:, 0]] == b) & (batch[pair_indices[:, 1]] == b)
+            edge_mask = (batch[pair_indices[:, 0]] == b) & (
+                batch[pair_indices[:, 1]] == b
+            )
             edge_mask = edge_mask & (bond_types > 0)
             if not edge_mask.any():
                 bonded_pairs = pair_indices.new_empty(0, 2)
@@ -259,7 +265,9 @@ class MoleculeBuilder:
                 rdkit_bt = RDKIT_BOND_TYPES[bt]
                 if rdkit_bt is not None:
                     try:
-                        rwmol.AddBond(i_local[idx].item(), j_local[idx].item(), rdkit_bt)
+                        rwmol.AddBond(
+                            i_local[idx].item(), j_local[idx].item(), rdkit_bt
+                        )
                     except Exception:
                         pass
 
@@ -271,7 +279,9 @@ class MoleculeBuilder:
                 conf = Chem.Conformer(n)
                 for i in range(n):
                     x_coord, y_coord, z_coord = mol_pos[i].tolist()
-                    conf.SetAtomPosition(i, (float(x_coord), float(y_coord), float(z_coord)))
+                    conf.SetAtomPosition(
+                        i, (float(x_coord), float(y_coord), float(z_coord))
+                    )
                 mol.AddConformer(conf, assignId=True)
 
                 Chem.SanitizeMol(mol)

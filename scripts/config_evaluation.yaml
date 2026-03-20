@@ -1,8 +1,8 @@
-data_path: data/generated_quetzal_qm9/unconditional
-data_set: QM9
+data_path: data/generated_34/unconditional
+data_set: GEOM
 compute_novelty: true
 compute_posebusters: true
 
-# Optional: path to bond predictor checkpoint (directory or .ckpt file).
+# Optional: path to bond predictor checkpoint directory.
 # If set, evaluation will also compute validity/uniqueness/novelty via bond predictor.
-bond_predictor_path: logs/BondPredictor/QM9/version_1/checkpoints
+bond_predictor_path: logs/BondPredictor/GEOM/version_1/checkpoints

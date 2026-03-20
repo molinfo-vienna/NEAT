@@ -157,13 +157,16 @@ def evaluate(args: argparse.Namespace) -> None:
             edm_valid_x_unique_lst.append(edm_valid_x_unique)
 
             # Compute xyz2mol-based metrics
-            mols_xyz2mol = builder.generate_rdkit_molecules_via_xyz2mol(x, pos, batch, progress_bar=True)
-            smiles_xyz2mol = [MolToSmiles(mol, canonical=True) if mol is not None else None for mol in mols_xyz2mol]
-            (
-                xyz2mol_valid, 
-                xyz2mol_valid_x_unique, 
-                xyz2mol_valid_x_unique_x_novel 
-            )= compute_validity_uniqueness_novelty(smiles_xyz2mol, reference_smiles)
+            mols_xyz2mol = builder.generate_rdkit_molecules_via_xyz2mol(
+                x, pos, batch, progress_bar=True
+            )
+            smiles_xyz2mol = [
+                MolToSmiles(mol, canonical=True) if mol is not None else None
+                for mol in mols_xyz2mol
+            ]
+            xyz2mol_valid, xyz2mol_valid_x_unique, xyz2mol_valid_x_unique_x_novel = (
+                compute_validity_uniqueness_novelty(smiles_xyz2mol, reference_smiles)
+            )
             xyz2mol_valid_lst.append(xyz2mol_valid)
             xyz2mol_valid_x_unique_lst.append(xyz2mol_valid_x_unique)
             xyz2mol_valid_x_unique_x_novel_lst.append(xyz2mol_valid_x_unique_x_novel)
@@ -171,7 +174,9 @@ def evaluate(args: argparse.Namespace) -> None:
             # Compute bond predictor-based metrics if bond predictor is available
             if use_bond_predictor:
                 mols_bp = builder.generate_rdkit_molecules_via_bond_predictor(
-                    x, pos, batch,
+                    x,
+                    pos,
+                    batch,
                     bond_predictor_path=params["bond_predictor_path"],
                     progress_bar=True,
                 )
@@ -191,15 +196,22 @@ def evaluate(args: argparse.Namespace) -> None:
                 # Compute PoseBusters metrics for this seed/prefix and save results (optional)
                 if compute_posebusters:
                     buster = PoseBusters(config="mol")
-                    pred_file = os.path.join(subdata_path, "generated_molecules_bond_predictor.sdf")
+                    pred_file = os.path.join(
+                        subdata_path, "generated_molecules_bond_predictor.sdf"
+                    )
                     save_molecules_to_sdf(mols_bp, pred_file)
                     df = buster.bust([pred_file], None, None, full_report=False)
-                    df.to_csv(os.path.join(subdata_path, "posebusters_report_bond_predictor.csv"), index=False)
+                    df.to_csv(
+                        os.path.join(
+                            subdata_path, "posebusters_report_bond_predictor.csv"
+                        ),
+                        index=False,
+                    )
                     pb_metrics = {}
                     for column in df.columns:
                         pb_metrics[column] = df[column].mean().item()
                     posebusters_metrics_list.append(pb_metrics)
-                    
+
             # Save evaluation results and generated molecule images for this seed/prefix
             with open(os.path.join(subdata_path, "evaluation_results.txt"), "w") as f:
                 f.write(f"Data set: {params['data_set']}\n")
@@ -213,13 +225,17 @@ def evaluate(args: argparse.Namespace) -> None:
                 f.write(f"Valid: {xyz2mol_valid*100:.2f}%\n")
                 f.write(f"Valid x unique: {xyz2mol_valid_x_unique * 100:.2f}%\n")
                 if params["compute_novelty"]:
-                    f.write(f"Valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n")
+                    f.write(
+                        f"Valid x unique x novel: { xyz2mol_valid_x_unique_x_novel *100:.2f}%\n"
+                    )
                 if use_bond_predictor:
                     f.write("\nBond predictor metrics:\n")
                     f.write(f"Valid: {bp_valid*100:.2f}%\n")
                     f.write(f"Valid x unique: {bp_valid_x_unique*100:.2f}%\n")
                     if params["compute_novelty"]:
-                        f.write(f"Valid x unique x novel: {bp_valid_x_unique_x_novel*100:.2f}%\n")
+                        f.write(
+                            f"Valid x unique x novel: {bp_valid_x_unique_x_novel*100:.2f}%\n"
+                        )
                 if compute_posebusters and posebusters_metrics_list:
                     f.write("\nPoseBusters metrics:\n")
                     for metric, value in posebusters_metrics_list[0].items():
@@ -286,7 +302,9 @@ def evaluate(args: argparse.Namespace) -> None:
             )
 
     # Compute overall mean and confidence intervals across all seeds/prefixes and save summary
-    atom_stability_mean, atom_stability_ci = compute_mean_and_95_ci(edm_atom_stability_lst)
+    atom_stability_mean, atom_stability_ci = compute_mean_and_95_ci(
+        edm_atom_stability_lst
+    )
     molecule_stability_mean, molecule_stability_ci = compute_mean_and_95_ci(
         edm_molecule_stability_lst
     )
@@ -325,16 +343,12 @@ def evaluate(args: argparse.Namespace) -> None:
         f.write(
             f"Molecule stable: {molecule_stability_mean*100:.2f}% ± {molecule_stability_ci*100:.2f}%\n"
         )
-        f.write(
-            f"Valid: {lookup_valid_mean*100:.2f}% ± {lookup_valid_ci*100:.2f}%\n"
-        )
+        f.write(f"Valid: {lookup_valid_mean*100:.2f}% ± {lookup_valid_ci*100:.2f}%\n")
         f.write(
             f"Valid x unique: {lookup_valid_x_unique_mean*100:.2f}% ± {lookup_valid_x_unique_ci*100:.2f}%\n"
         )
         f.write("\nxyz2mol metrics:\n")
-        f.write(
-            f"Valid: {xyz2mol_valid_mean*100:.2f}% ± {xyz2mol_valid_ci*100:.2f}%\n"
-        )
+        f.write(f"Valid: {xyz2mol_valid_mean*100:.2f}% ± {xyz2mol_valid_ci*100:.2f}%\n")
         f.write(
             f"Valid x unique: {xyz2mol_valid_x_unique_mean*100:.2f}% ± {xyz2mol_valid_x_unique_ci*100:.2f}%\n"
         )
@@ -358,7 +372,9 @@ def evaluate(args: argparse.Namespace) -> None:
                 f.write("\nPoseBusters metrics:\n")
                 metric_names = list(posebusters_metrics_list[0].keys())
                 for metric_name in metric_names:
-                    values = [metrics[metric_name] for metrics in posebusters_metrics_list]
+                    values = [
+                        metrics[metric_name] for metrics in posebusters_metrics_list
+                    ]
                     mean, ci = compute_mean_and_95_ci(values)
                     f.write(f"{metric_name}: {mean*100:.2f}% ± {ci*100:.2f}%\n")
 

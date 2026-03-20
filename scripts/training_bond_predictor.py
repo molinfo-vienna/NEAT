@@ -14,7 +14,8 @@ import torch
 import torch_geometric
 import yaml
 from lightning import Trainer, seed_everything
-from lightning.pytorch.callbacks import EarlyStopping, LearningRateMonitor, ModelCheckpoint
+from lightning.pytorch.callbacks import (EarlyStopping, LearningRateMonitor,
+                                         ModelCheckpoint)
 from lightning.pytorch.loggers.tensorboard import TensorBoardLogger
 
 from neat.dataset import DataModule
@@ -40,7 +41,9 @@ def train(args: argparse.Namespace) -> None:
     Returns:
         None
     """
-    config_path = args.config_file or os.path.join(ROOT, "scripts", "config_bond_predictor.yaml")
+    config_path = args.config_file or os.path.join(
+        ROOT, "scripts", "config_bond_predictor.yaml"
+    )
     print(f"Using config: {config_path}")
 
     params = yaml.load(
@@ -58,12 +61,14 @@ def train(args: argparse.Namespace) -> None:
         batch_size=params.get("batch_size", 64),
         num_workers=params.get("num_workers", 8),
         task="bond_prediction",
-        radius=params.get("radius", 2.5),
-        noise_ratio=params.get("noise_ratio", 0.0),
+        bond_predictor_radius=params.get("radius", 2.5),
+        bond_predictor_noise_ratio=params.get("noise_ratio", 0.0),
     )
     datamodule.setup()
     vocab_size = datamodule.vocab_size
-    print(f"Train: {len(datamodule.training_data)}, Val: {len(datamodule.validation_data)}")
+    print(
+        f"Train: {len(datamodule.training_data)}, Val: {len(datamodule.validation_data)}"
+    )
 
     model_params = {
         "vocab_size": vocab_size,
@@ -124,10 +129,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument(
-        "--config", 
-        dest="config_file", 
-        required=False, 
-        metavar="<file>", 
+        "--config",
+        dest="config_file",
+        required=False,
+        metavar="<file>",
         help="Config file for training.",
     )
 

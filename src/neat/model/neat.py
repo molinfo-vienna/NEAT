@@ -16,7 +16,8 @@ from tqdm import tqdm
 
 from ..dataset.augmentation import RandomRotationAugmentation
 from .attention import Block
-from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
+from .positional_encoding import (AxialRotaryPositionEncoding,
+                                  FourierPositionEncoding)
 from .simple_mlp import SimpleMLPAdaLN
 
 
