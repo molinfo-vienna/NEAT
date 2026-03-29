@@ -199,7 +199,7 @@ def evaluate(args: argparse.Namespace) -> None:
                     pred_file = os.path.join(
                         subdata_path, "generated_molecules_bond_predictor.sdf"
                     )
-                    save_molecules_to_sdf(mols_bp, pred_file)
+                    save_molecules_to_sdf(mols_xyz2mol, pred_file)
                     df = buster.bust([pred_file], None, None, full_report=False)
                     df.to_csv(
                         os.path.join(
