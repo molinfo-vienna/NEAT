@@ -752,9 +752,10 @@ def check_stability(positions, atom_type, dataset_info, debug=False):
 def mol2smiles(mol):
     try:
         Chem.SanitizeMol(mol)
-    except ValueError:
+        return Chem.MolToSmiles(mol)
+    except Exception as e:
+        print(f"Error converting molecule to SMILES: {e}")
         return None
-    return Chem.MolToSmiles(mol)
 
 
 def build_molecule(positions, atom_types, dataset_info, bond_orders=None):
