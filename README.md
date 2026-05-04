@@ -15,10 +15,6 @@ Welcome to the NEAT repository. NEAT is an autoregressive model that builds 3D m
 
 1. Clone the repository and cd into the repository's root:
 
-```bash
-git clone https://github.com/molinfo-vienna/NEAT.git
-cd NEAT
-```
 
 2. Create and activate an environment with the required python version:
 
@@ -47,7 +43,7 @@ pip install .
 python scripts/get_weights.py
 ```
 
-Alternatively you can download the trained model weights manually from [figshare](https://doi.org/10.6084/m9.figshare.31113949). Unzip and place into a `trained_models` folder for using the generation script without modifications to the `config_generation.yaml` configuration file.
+Alternatively you can download the trained model weights manually from [figshare](). Unzip and place into a `trained_models` folder for using the generation script without modifications to the `config_generation.yaml` configuration file.
 
 # Usage
 
