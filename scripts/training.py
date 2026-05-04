@@ -49,7 +49,9 @@ def train(args: argparse.Namespace) -> None:
         os.path.join(ROOT, "data"),
         params["data_set"],
         batch_size=params["batch_size"],
-        noise_std=params["noise_std"],
+        flow_matching_noise_std=params["noise_std"],
+        source_set_perturbation_fraction=params["perturbation_fraction"],
+        source_set_perturbation_std=params["perturbation_std"],
         num_workers=8,
     )
     datamodule.setup()

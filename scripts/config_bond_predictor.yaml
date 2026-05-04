@@ -1,0 +1,14 @@
+data_set: QM9
+batch_size: 512
+radius: 2.5
+noise_ratio: 0.05
+n_embd: 256
+n_conv_layers: 4
+dropout: 0.1
+learning_rate: 1.0e-3
+weight_decay: 1.0e-6
+max_epochs: 100
+lr_warmup_epochs: 5
+lr_min_ratio: 0.1
+early_stopping_patience: 5
+early_stopping_min_delta: 1.0e-3

@@ -1,3 +1,8 @@
 data_path: output/generated_best_geom/unconditional
 data_set: GEOM
-compute_novelty: false
+compute_novelty: true
+compute_posebusters: false
+
+# Optional: path to bond predictor checkpoint directory.
+# If set, evaluation will also compute validity/uniqueness/novelty via bond predictor.
+# bond_predictor_path: <path_to_bond_predictor_checkpoint>

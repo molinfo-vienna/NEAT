@@ -57,37 +57,39 @@ class GenerationMonitor(Callback):
         ):
             return
 
+        generated_mols = None
         if self.dataset == "QM9":
             generated_mols = pl_module.generate(
                 batch_size=self.num_samples, integration_method="euler"
             )
-            builder = MoleculeBuilder(vocab=pl_module.hparams.data_set)
-            mols = builder.generate_rdkit_molecules(
-                generated_mols.x, generated_mols.pos, generated_mols.batch
-            )
-            n_valid = self.compute_validity(mols)
-            n_unique = self.compute_uniqueness(mols)
-            frac_valid = n_valid / self.num_samples
-            frac_unique = n_unique / n_valid if n_valid > 0 else 0.0
 
         elif self.dataset == "GEOM":
             generated_mols = pl_module.generate(
                 batch_size=self.num_samples, integration_method="euler_maruyama"
             )
-            (
-                _,
-                _,
-                frac_valid,
-                frac_unique,
-                _,
-            ) = edm_metrics(
-                generated_mols.x.cpu(),
-                generated_mols.pos.cpu(),
-                generated_mols.batch.cpu(),
-                self.dataset,
-            )
+            # (
+            #     _,
+            #     _,
+            #     frac_valid,
+            #     frac_unique,
+            #     _,
+            # ) = edm_metrics(
+            #     generated_mols.x.cpu(),
+            #     generated_mols.pos.cpu(),
+            #     generated_mols.batch.cpu(),
+            #     self.dataset,
+            # )
         else:
             raise ValueError(f"Unknown dataset: {self.dataset}")
+
+        builder = MoleculeBuilder(vocab=pl_module.hparams.data_set)
+        mols = builder.generate_rdkit_molecules_via_xyz2mol(
+            generated_mols.x, generated_mols.pos, generated_mols.batch
+        )
+        n_valid = self.compute_validity(mols)
+        n_unique = self.compute_uniqueness(mols)
+        frac_valid = n_valid / self.num_samples
+        frac_unique = n_unique / n_valid if n_valid > 0 else 0.0
 
         pl_module.log(
             "val/validity",

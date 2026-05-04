@@ -1,5 +1,5 @@
 from .dataset import DataModule, GEOMDataSet, QM9DataSet
-from .model import GenerationMonitor, MoleculeBuilder, NEAT
+from .model import NEAT, GenerationMonitor, MoleculeBuilder
 from .utils import edm_metrics
 
 __all__ = [

@@ -16,7 +16,8 @@ from tqdm import tqdm
 
 from ..dataset.augmentation import RandomRotationAugmentation
 from .attention import Block
-from .positional_encoding import AxialRotaryPositionEncoding, FourierPositionEncoding
+from .positional_encoding import (AxialRotaryPositionEncoding,
+                                  FourierPositionEncoding)
 from .simple_mlp import SimpleMLPAdaLN
 
 
@@ -526,7 +527,7 @@ class NEAT(LightningModule):
             # 1) linear warmup for warmup_iters steps
             warmup_epochs = self.hparams.lr_warmup_epochs
             min_lr = self.hparams.lr_min_ratio
-            lr_decay_epochs = self.hparams.max_epochs
+            lr_decay_epochs = self.hparams.lr_decay_epochs
             if epoch < warmup_epochs:
                 return (epoch + 1) / (warmup_epochs + 1)
             # 2) if it > lr_decay_iters, return min learning rate
@@ -686,8 +687,8 @@ class NEAT(LightningModule):
 
             rotation_augmentation = RandomRotationAugmentation()
             pos = rotation_augmentation.rotate_graphs_randomly(pos, batch_source)
-            trans = torch.randn(batch_size, 3, device=device)
-            pos += trans[batch_source]
+            # trans = torch.randn(batch_size, 3, device=device)
+            # pos += trans[batch_source]
         else:
             # (1) Sample initial atoms from the prior distribution of atom types in QM9
             if self.hparams.data_set == "QM9":
@@ -726,7 +727,8 @@ class NEAT(LightningModule):
             else:
                 raise ValueError(f"Unknown data set: {self.hparams.data_set}")
             # (2) Initialize starting positions with random ones
-            pos = self.hparams.noise_std * torch.randn(batch_size, 3, device=device)
+            pos = torch.zeros(batch_size, 3, device=device)
+            # pos = self.hparams.noise_std * torch.randn(batch_size, 3, device=device)
             # (3) Initialize the batch source tensor
             batch_source = torch.arange(batch_size, device=device)
         # (4) Create a mask for the stop tokens that will be used to track which molecules have a stop token
@@ -761,6 +763,11 @@ class NEAT(LightningModule):
 
                 # (6.4) Sample next atom types from the resulting distribution
                 x_next = torch.argmax(probabilities, dim=1)
+                x_next_0_mask = x_next == 0
+                x_next_1_mask = x_next == 1
+                x_next = torch.multinomial(probabilities, num_samples=1).squeeze(1)
+                x_next[x_next_0_mask] = 0
+                x_next[x_next_1_mask] = 1
 
                 # (6.5) Create a mask on the active molecules given the newly predicted atom types
                 x_next_mask = x_next == 0  # [active_mol_count]
@@ -833,8 +840,9 @@ class NEAT(LightningModule):
 
                 x = torch.cat(updated_x, dim=0)  # [batch_size]
                 pos = torch.cat(updated_pos, dim=0)  # [batch_size, 3]
-                # pos -= pos.mean(dim=0, keepdim=True)
                 batch_source = torch.cat(updated_batch, dim=0)  # [batch_size]
+                mean_pos = global_mean_pool(pos, batch_source)
+                pos = pos - mean_pos[batch_source]
 
         return Batch(x=x, pos=pos, batch=batch_source)
 
