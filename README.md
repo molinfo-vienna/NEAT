@@ -43,7 +43,7 @@ pip install .
 python scripts/get_weights.py
 ```
 
-Alternatively you can download the trained model weights manually from figshare. Unzip and place into a `trained_models` folder for using the generation script without modifications to the `config_generation.yaml` configuration file.
+Alternatively you can download the trained model weights manually from [figshare](https://figshare.com/s/7a0adb3c74fe1ab0a264). Unzip and place into a `trained_models` folder for using the generation script without modifications to the `config_generation.yaml` configuration file.
 
 # Usage
 
