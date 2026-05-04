@@ -54,19 +54,18 @@ def compute_validity_uniqueness_novelty(
     return p_valid, p_valid_unique, p_valid_unique_novel
 
 
-def compute_mean_and_95_ci(data: list[float]) -> tuple[float, float]:
-    """Compute mean and 95% confidence interval for a list of data.
+def compute_mean_and_std(data: list[float]) -> tuple[float, float]:
+    """Compute mean and standard deviation for a list of data.
 
     Args:
         data (List[float]): list of data points.
 
     Returns:
-        Tuple[float, float]: mean and 95% confidence interval.
+        Tuple[float, float]: mean and standard deviation.
     """
     mean = np.mean(data)
-    std_err = np.std(data) / np.sqrt(len(data))
-    margin_of_error = 1.96 * std_err
-    return mean, margin_of_error
+    std = np.std(data)
+    return mean, std
 
 
 def save_molecules_to_sdf(mols: list[rdkit.Chem.Mol], file_path: str) -> None:
@@ -302,71 +301,71 @@ def evaluate(args: argparse.Namespace) -> None:
             )
 
     # Compute overall mean and confidence intervals across all seeds/prefixes and save summary
-    atom_stability_mean, atom_stability_ci = compute_mean_and_95_ci(
+    atom_stability_mean, atom_stability_std = compute_mean_and_std(
         edm_atom_stability_lst
     )
-    molecule_stability_mean, molecule_stability_ci = compute_mean_and_95_ci(
+    molecule_stability_mean, molecule_stability_std = compute_mean_and_std(
         edm_molecule_stability_lst
     )
-    lookup_valid_mean, lookup_valid_ci = compute_mean_and_95_ci(edm_valid_lst)
-    lookup_valid_x_unique_mean, lookup_valid_x_unique_ci = compute_mean_and_95_ci(
+    lookup_valid_mean, lookup_valid_std = compute_mean_and_std(edm_valid_lst)
+    lookup_valid_x_unique_mean, lookup_valid_x_unique_std = compute_mean_and_std(
         edm_valid_x_unique_lst
     )
-    xyz2mol_valid_mean, xyz2mol_valid_ci = compute_mean_and_95_ci(xyz2mol_valid_lst)
-    xyz2mol_valid_x_unique_mean, xyz2mol_valid_x_unique_ci = compute_mean_and_95_ci(
+    xyz2mol_valid_mean, xyz2mol_valid_std = compute_mean_and_std(xyz2mol_valid_lst)
+    xyz2mol_valid_x_unique_mean, xyz2mol_valid_x_unique_std = compute_mean_and_std(
         xyz2mol_valid_x_unique_lst
     )
     if params["compute_novelty"]:
-        xyz2mol_valid_x_unique_x_novel_mean, xyz2mol_valid_x_unique_x_novel_ci = (
-            compute_mean_and_95_ci(xyz2mol_valid_x_unique_x_novel_lst)
+        xyz2mol_valid_x_unique_x_novel_mean, xyz2mol_valid_x_unique_x_novel_std = (
+            compute_mean_and_std(xyz2mol_valid_x_unique_x_novel_lst)
         )
     if use_bond_predictor:
-        bond_predictor_valid_mean, bond_predictor_valid_ci = compute_mean_and_95_ci(
+        bond_predictor_valid_mean, bond_predictor_valid_std = compute_mean_and_std(
             bp_valid_lst
         )
-        bond_predictor_valid_x_unique_mean, bond_predictor_valid_x_unique_ci = (
-            compute_mean_and_95_ci(bp_valid_x_unique_lst)
+        bond_predictor_valid_x_unique_mean, bond_predictor_valid_x_unique_std = (
+            compute_mean_and_std(bp_valid_x_unique_lst)
         )
         if params["compute_novelty"]:
             (
                 bond_predictor_valid_x_unique_x_novel_mean,
-                bond_predictor_valid_x_unique_x_novel_ci,
-            ) = compute_mean_and_95_ci(bp_valid_x_unique_x_novel_lst)
+                bond_predictor_valid_x_unique_x_novel_std,
+            ) = compute_mean_and_std(bp_valid_x_unique_x_novel_lst)
 
     with open(os.path.join(data_path, "evaluation_summary.txt"), "w") as f:
         f.write(f"Data set: {params['data_set']}\n")
         f.write(f"RDKit version: {rdkit.__version__}\n")
         f.write("\nEDM metrics:\n")
         f.write(
-            f"Atom stable: {atom_stability_mean*100:.2f}% ± {atom_stability_ci*100:.2f}%\n"
+            f"Atom stable: {atom_stability_mean*100:.2f}% ± {atom_stability_std*100:.2f}%\n"
         )
         f.write(
-            f"Molecule stable: {molecule_stability_mean*100:.2f}% ± {molecule_stability_ci*100:.2f}%\n"
+            f"Molecule stable: {molecule_stability_mean*100:.2f}% ± {molecule_stability_std*100:.2f}%\n"
         )
-        f.write(f"Valid: {lookup_valid_mean*100:.2f}% ± {lookup_valid_ci*100:.2f}%\n")
+        f.write(f"Valid: {lookup_valid_mean*100:.2f}% ± {lookup_valid_std*100:.2f}%\n")
         f.write(
-            f"Valid x unique: {lookup_valid_x_unique_mean*100:.2f}% ± {lookup_valid_x_unique_ci*100:.2f}%\n"
+            f"Valid x unique: {lookup_valid_x_unique_mean*100:.2f}% ± {lookup_valid_x_unique_std*100:.2f}%\n"
         )
         f.write("\nxyz2mol metrics:\n")
-        f.write(f"Valid: {xyz2mol_valid_mean*100:.2f}% ± {xyz2mol_valid_ci*100:.2f}%\n")
+        f.write(f"Valid: {xyz2mol_valid_mean*100:.2f}% ± {xyz2mol_valid_std*100:.2f}%\n")
         f.write(
-            f"Valid x unique: {xyz2mol_valid_x_unique_mean*100:.2f}% ± {xyz2mol_valid_x_unique_ci*100:.2f}%\n"
+            f"Valid x unique: {xyz2mol_valid_x_unique_mean*100:.2f}% ± {xyz2mol_valid_x_unique_std*100:.2f}%\n"
         )
         if params["compute_novelty"]:
             f.write(
-                f"Valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean*100:.2f}% ± {xyz2mol_valid_x_unique_x_novel_ci*100:.2f}%\n"
+                f"Valid x unique x novel: {xyz2mol_valid_x_unique_x_novel_mean*100:.2f}% ± {xyz2mol_valid_x_unique_x_novel_std*100:.2f}%\n"
             )
         if use_bond_predictor:
             f.write("\nBond predictor metrics:\n")
             f.write(
-                f"Valid: {bond_predictor_valid_mean*100:.2f}% ± {bond_predictor_valid_ci*100:.2f}%\n"
+                f"Valid: {bond_predictor_valid_mean*100:.2f}% ± {bond_predictor_valid_std*100:.2f}%\n"
             )
             f.write(
-                f"Valid x unique: {bond_predictor_valid_x_unique_mean*100:.2f}% ± {bond_predictor_valid_x_unique_ci*100:.2f}%\n"
+                f"Valid x unique: {bond_predictor_valid_x_unique_mean*100:.2f}% ± {bond_predictor_valid_x_unique_std*100:.2f}%\n"
             )
             if params["compute_novelty"]:
                 f.write(
-                    f"Valid x unique x novel: {bond_predictor_valid_x_unique_x_novel_mean*100:.2f}% ± {bond_predictor_valid_x_unique_x_novel_ci*100:.2f}%\n"
+                    f"Valid x unique x novel: {bond_predictor_valid_x_unique_x_novel_mean*100:.2f}% ± {bond_predictor_valid_x_unique_x_novel_std*100:.2f}%\n"
                 )
             if compute_posebusters and posebusters_metrics_list:
                 f.write("\nPoseBusters metrics:\n")
@@ -375,8 +374,8 @@ def evaluate(args: argparse.Namespace) -> None:
                     values = [
                         metrics[metric_name] for metrics in posebusters_metrics_list
                     ]
-                    mean, ci = compute_mean_and_95_ci(values)
-                    f.write(f"{metric_name}: {mean*100:.2f}% ± {ci*100:.2f}%\n")
+                    mean, std = compute_mean_and_std(values)
+                    f.write(f"{metric_name}: {mean*100:.2f}% ± {std*100:.2f}%\n")
 
 
 if __name__ == "__main__":
