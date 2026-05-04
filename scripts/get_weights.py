@@ -3,10 +3,10 @@ import subprocess
 import zipfile
 
 FIGSHARE_URL_GEOM = (
-    "https://figshare.com/ndownloader/files/61228726?private_link=8291194090f2133fac63"
+    "https://ndownloader.figshare.com/files/61228726"
 )
 FIGSHARE_URL_QM9 = (
-    "https://figshare.com/ndownloader/files/61228768?private_link=8291194090f2133fac63"
+    "https://ndownloader.figshare.com/files/61228768"
 )
 ROOT = os.getcwd()
 OUTPUT_FOLDER = os.path.join(ROOT, "trained_models")

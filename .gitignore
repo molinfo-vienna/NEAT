@@ -4,7 +4,7 @@ build
 data
 logs 
 output
-trained_models
+trained_models*
 *.egg-info
 *.env
 *.flake8
