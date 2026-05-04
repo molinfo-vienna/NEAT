@@ -1,8 +1,8 @@
-checkpoints_path: logs/NEAT/version_32
-output_path: data/generated_32
+checkpoints_path: trained_models/version_best_geom
+output_path: output/generated_best_geom
 data_set: GEOM
 num_molecules: 10000
-batch_size: 1000
+batch_size: 5000
 max_atoms: 200
 num_time_steps: 60
 num_runs: 3

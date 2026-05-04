@@ -3,7 +3,7 @@ batch_size: 512
 bias: true
 data_set: GEOM
 dropout: 0.1
-learning_rate: 2.5e-05
+learning_rate: 2.5e-5
 lr_decay_epochs: 1000
 lr_min_ratio: 0.1
 lr_warmup_epochs: 10
@@ -14,9 +14,9 @@ n_head: 12
 n_layer: 12
 n_layers_fm: 6
 noise_std: 2.5
+perturbation_fraction: 0.5
+perturbation_std: 0.05
 rope: false
 time_step_resampling: 4
 time_step_sampling: logit_normal
-weight_decay: 1.0e-06
-# perturbation_fraction: 0.2
-# perturbation_std: 0.02
+weight_decay: 0.000001
