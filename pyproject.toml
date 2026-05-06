@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "neat"
-version = "1.1.0"
+version = "2.0.0"
 description = "Neighborhood-Guided, Efficient, Autoregressive Set Transformer for 3D Molecular Generation"
 readme = "README.md"
 requires-python = ">=3.11"
